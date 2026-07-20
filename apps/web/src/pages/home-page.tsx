@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, CalendarClock, Download, Target, TrendingUp, Trophy } from 'lucide-react';
+import { useState } from 'react';
 
 import { useAuth } from '../auth/auth-context';
 import { apiRequest, downloadApiFile } from '../lib/api';
@@ -42,12 +43,30 @@ interface Dashboard {
     opportunity: { company: { name: string } };
   }>;
 }
+interface OwnerOption {
+  id: string;
+  name: string;
+  role: string;
+}
 
 export function HomePage(): React.JSX.Element {
   const { user } = useAuth();
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [ownerId, setOwnerId] = useState('');
+  const query = new URLSearchParams();
+  if (from) query.set('from', from);
+  if (to) query.set('to', `${to}T23:59:59.999Z`);
+  if (ownerId) query.set('ownerId', ownerId);
+  const queryString = query.toString();
   const dashboard = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => apiRequest<Dashboard>('/dashboard'),
+    queryKey: ['dashboard', queryString],
+    queryFn: () => apiRequest<Dashboard>(`/dashboard${queryString ? `?${queryString}` : ''}`),
+  });
+  const owners = useQuery({
+    queryKey: ['dashboard-owners'],
+    queryFn: () => apiRequest<OwnerOption[]>('/assignees'),
+    enabled: user?.role === 'ADMIN' || user?.role === 'MANAGER',
   });
   if (dashboard.isLoading) return <p className="p-8 text-sm">Loading your workspace?</p>;
   if (!dashboard.data)
@@ -79,6 +98,58 @@ export function HomePage(): React.JSX.Element {
           Role: {user?.role}
         </p>
       </header>
+      <section aria-label="Dashboard filters" className="surface mb-6 rounded-2xl p-4">
+        <div className="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="grid gap-2 text-sm font-semibold">
+            From
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(event) => setFrom(event.target.value)}
+              className="h-11 rounded-xl border border-slate-300 px-3"
+            />
+          </label>
+          <label className="grid gap-2 text-sm font-semibold">
+            To
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(event) => setTo(event.target.value)}
+              className="h-11 rounded-xl border border-slate-300 px-3"
+            />
+          </label>
+          {(user?.role === 'ADMIN' || user?.role === 'MANAGER') && (
+            <label className="grid gap-2 text-sm font-semibold">
+              Owner
+              <select
+                value={ownerId}
+                onChange={(event) => setOwnerId(event.target.value)}
+                className="h-11 rounded-xl border border-slate-300 px-3"
+              >
+                <option value="">All owners</option>
+                {owners.data?.map((owner) => (
+                  <option key={owner.id} value={owner.id}>
+                    {owner.name} ({owner.role})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setFrom('');
+              setTo('');
+              setOwnerId('');
+            }}
+            className="h-11 rounded-xl border border-slate-300 px-4 text-sm font-bold hover:bg-cloud-50"
+          >
+            Clear filters
+          </button>
+        </div>
+      </section>
       {data.sales && (
         <>
           <section aria-label="Sales metrics" className="metric-grid grid gap-4">
@@ -116,7 +187,7 @@ export function HomePage(): React.JSX.Element {
                   </p>
                   <h2 className="mt-1 text-xl font-black">Value by stage</h2>
                 </div>
-                <ExportButton kind="opportunities" />
+                <ExportButton kind="opportunities" queryString={queryString} />
               </div>
               <div className="mt-6 grid gap-4">
                 {data.sales.pipeline.map((stage) => (
@@ -148,7 +219,7 @@ export function HomePage(): React.JSX.Element {
                   </p>
                   <h2 className="mt-1 text-xl font-black">Accepted sales</h2>
                 </div>
-                <ExportButton kind="offering-sales" />
+                <ExportButton kind="offering-sales" queryString={queryString} />
               </div>
               <ul className="mt-5 grid gap-3">
                 {data.sales.salesByOffering.map((item) => (
@@ -188,7 +259,7 @@ export function HomePage(): React.JSX.Element {
               </p>
               <h2 className="mt-1 text-xl font-black">Upcoming renewals</h2>
             </div>
-            <ExportButton kind="renewals" />
+            <ExportButton kind="renewals" queryString={queryString} />
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {data.renewals.map((item) => (
@@ -261,10 +332,21 @@ function TaskWidget({
     </article>
   );
 }
-function ExportButton({ kind }: { kind: string }): React.JSX.Element {
+function ExportButton({
+  kind,
+  queryString,
+}: {
+  kind: string;
+  queryString: string;
+}): React.JSX.Element {
   return (
     <button
-      onClick={() => void downloadApiFile(`/reports/${kind}.csv`, `consultflow-${kind}.csv`)}
+      onClick={() =>
+        void downloadApiFile(
+          `/reports/${kind}.csv${queryString ? `?${queryString}` : ''}`,
+          `consultflow-${kind}.csv`,
+        )
+      }
       className="no-print rounded-lg p-2 text-ink-700 hover:bg-cloud-100"
       aria-label={`Export ${kind} CSV`}
     >

@@ -59,6 +59,7 @@ interface Contract {
   startDate: string;
   endDate: string | null;
   renewalDate: string | null;
+  renewalNotes: string | null;
   opportunity: Opportunity;
   owner: { name: string };
 }
@@ -492,9 +493,59 @@ export function QuotePrintPage(): React.JSX.Element {
 }
 
 export function ContractsPage(): React.JSX.Element {
+  const client = useQueryClient();
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({
+    quoteId: '',
+    number: '',
+    startDate: '',
+    endDate: '',
+    renewalDate: '',
+    amount: '',
+    currency: 'USD',
+    renewalNotes: '',
+  });
   const contracts = useQuery({
     queryKey: ['contracts'],
     queryFn: () => apiRequest<PaginatedResponse<Contract>>('/contracts'),
+  });
+  const quotes = useQuery({
+    queryKey: ['accepted-quotes'],
+    queryFn: () => apiRequest<PaginatedResponse<Quote>>('/quotes?pageSize=100'),
+  });
+  const acceptedQuotes = quotes.data?.data.filter((quote) => quote.status === 'ACCEPTED') ?? [];
+  const create = useMutation({
+    mutationFn: () => {
+      const quote = acceptedQuotes.find((candidate) => candidate.id === form.quoteId);
+      if (!quote) throw new Error('Choose an accepted quote.');
+      return apiRequest<Contract>('/contracts', {
+        method: 'POST',
+        body: JSON.stringify({
+          opportunityId: quote.opportunity.id,
+          quoteId: quote.id,
+          number: form.number,
+          startDate: form.startDate,
+          endDate: form.endDate || undefined,
+          renewalDate: form.renewalDate || undefined,
+          amount: form.amount,
+          currency: form.currency,
+          status: 'ACTIVE',
+          renewalNotes: form.renewalNotes || undefined,
+        }),
+      });
+    },
+    onSuccess: async () => {
+      setShow(false);
+      await client.invalidateQueries({ queryKey: ['contracts'] });
+    },
+  });
+  const update = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      apiRequest<Contract>(`/contracts/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['contracts'] }),
   });
   return (
     <div>
@@ -502,6 +553,8 @@ export function ContractsPage(): React.JSX.Element {
         title="Contracts & renewals"
         eyebrow="Customer value"
         description="Track active commitments, renewal windows, and expansion conversations."
+        action={() => setShow(true)}
+        actionLabel="New contract"
       />
       <div className="grid gap-4">
         {contracts.data?.data.map((contract) => (
@@ -523,7 +576,22 @@ export function ContractsPage(): React.JSX.Element {
               <p className="text-xl font-black">{money(contract.amount, contract.currency)}</p>
             </div>
             <div>
-              <Badge value={contract.status} />
+              <label className="grid gap-1 text-xs font-bold text-ink-700">
+                Status
+                <select
+                  aria-label={`Status for ${contract.number}`}
+                  value={contract.status}
+                  disabled={update.isPending}
+                  onChange={(event) =>
+                    update.mutate({ id: contract.id, status: event.target.value })
+                  }
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm"
+                >
+                  {['DRAFT', 'ACTIVE', 'EXPIRED', 'TERMINATED', 'RENEWED'].map((status) => (
+                    <option key={status}>{status}</option>
+                  ))}
+                </select>
+              </label>
               <p className="mt-2 text-xs text-ink-700">
                 Renewal{' '}
                 {contract.renewalDate
@@ -534,6 +602,91 @@ export function ContractsPage(): React.JSX.Element {
           </article>
         ))}
       </div>
+      {contracts.data?.data.length === 0 && (
+        <p className="surface rounded-2xl p-8 text-center text-sm text-ink-700">
+          No contracts yet. Create one from an accepted quote on a won opportunity.
+        </p>
+      )}
+      {show && (
+        <Dialog title="Create contract" close={() => setShow(false)}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              create.mutate();
+            }}
+            className="grid gap-4 sm:grid-cols-2"
+          >
+            <Select
+              label="Accepted quote"
+              value={form.quoteId}
+              options={acceptedQuotes.map((quote) => ({
+                value: quote.id,
+                label: `${quote.number} ? ${quote.opportunity.company.name}`,
+              }))}
+              onChange={(quoteId) => {
+                const quote = acceptedQuotes.find((candidate) => candidate.id === quoteId);
+                setForm({
+                  ...form,
+                  quoteId,
+                  amount: quote?.total ?? form.amount,
+                  currency: quote?.currency ?? form.currency,
+                });
+              }}
+            />
+            <Field
+              label="Contract number"
+              required
+              value={form.number}
+              onChange={(number) => setForm({ ...form, number })}
+            />
+            <Field
+              label="Start date"
+              type="date"
+              required
+              value={form.startDate}
+              onChange={(startDate) => setForm({ ...form, startDate })}
+            />
+            <Field
+              label="End date"
+              type="date"
+              min={form.startDate || undefined}
+              value={form.endDate}
+              onChange={(endDate) => setForm({ ...form, endDate })}
+            />
+            <Field
+              label="Renewal date"
+              type="date"
+              min={form.startDate || undefined}
+              value={form.renewalDate}
+              onChange={(renewalDate) => setForm({ ...form, renewalDate })}
+            />
+            <Field
+              label="Amount"
+              type="number"
+              min="0"
+              step="0.01"
+              required
+              value={form.amount}
+              onChange={(amount) => setForm({ ...form, amount })}
+            />
+            <label className="grid gap-2 text-sm font-semibold sm:col-span-2">
+              Renewal and expansion notes
+              <textarea
+                value={form.renewalNotes}
+                onChange={(event) => setForm({ ...form, renewalNotes: event.target.value })}
+                className="min-h-24 rounded-xl border border-slate-300 p-3"
+              />
+            </label>
+            <Save pending={create.isPending} />
+            {acceptedQuotes.length === 0 && (
+              <p className="text-sm text-ink-700 sm:col-span-2">
+                Accept a quote and mark its opportunity won before creating a contract.
+              </p>
+            )}
+            {create.error && <ErrorMessage error={create.error} />}
+          </form>
+        </Dialog>
+      )}
     </div>
   );
 }

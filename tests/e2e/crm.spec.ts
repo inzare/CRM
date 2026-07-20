@@ -25,6 +25,8 @@ async function selectMatching(select: Locator, pattern: RegExp): Promise<void> {
 test.describe.serial('ConsultFlow required journeys', () => {
   test('sign in and sign out', async ({ page }) => {
     await signIn(page);
+    await expect(page.getByLabel('Dashboard filters')).toBeVisible();
+    await expect(page.getByLabel('Owner')).toBeVisible();
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   });
@@ -51,6 +53,12 @@ test.describe.serial('ConsultFlow required journeys', () => {
     await page.getByLabel('Decision maker').check();
     await page.getByRole('button', { name: 'Save record' }).click();
     await expect(page.getByText('Linus Torvalds')).toBeVisible();
+    await page.getByRole('button', { name: 'Log activity' }).click();
+    await page.getByLabel('Activity type').selectOption('CALL');
+    await page.getByLabel('Subject').fill(`E2E discovery call ${suffix}`);
+    await page.getByLabel('Notes').fill('Confirmed the product evaluation stakeholders.');
+    await page.getByRole('button', { name: 'Save record' }).click();
+    await expect(page.getByText(`E2E discovery call ${suffix}`)).toBeVisible();
   });
   test('lead qualification and conversion', async ({ page }) => {
     await signIn(page, 'sales@consultflow.local');
@@ -130,6 +138,27 @@ test.describe.serial('ConsultFlow required journeys', () => {
     await row.getByRole('button', { name: /Send/ }).click();
     await row.getByRole('button', { name: 'Accept' }).click();
     await expect(row).toContainText('ACCEPTED');
+
+    await page.getByRole('link', { name: 'Pipeline' }).click();
+    const opportunityCard = page.locator('article').filter({
+      has: page.getByRole('heading', { name: `E2E Company ${suffix} opportunity` }),
+    });
+    await opportunityCard.getByRole('combobox').selectOption({ label: 'Negotiation' });
+    await expect(page.getByRole('region', { name: 'Negotiation' })).toContainText(
+      `E2E Company ${suffix} opportunity`,
+    );
+    await opportunityCard.getByRole('combobox').selectOption({ label: 'Won' });
+    await expect(page.getByRole('region', { name: 'Won' })).toContainText(
+      `E2E Company ${suffix} opportunity`,
+    );
+
+    await page.getByRole('link', { name: 'Contracts' }).click();
+    await page.getByRole('button', { name: 'New contract' }).click();
+    await selectMatching(page.getByLabel('Accepted quote'), new RegExp(`E2E Company ${suffix}`));
+    await page.getByLabel('Contract number').fill(`E2E-C-${suffix}`);
+    await page.getByLabel('Start date').fill(new Date().toISOString().slice(0, 10));
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText(`E2E-C-${suffix}`)).toBeVisible();
   });
   test('task completion', async ({ page }) => {
     await signIn(page, 'manager@consultflow.local');

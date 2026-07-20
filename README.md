@@ -65,7 +65,7 @@ npm run build
 npm run openspec:validate
 ```
 
-Integration tests refuse to reset a database unless `NODE_ENV=test` and the database name contains `test`. Start the Compose `postgres-test` profile and set the variables shown in `.env.example`. Playwright expects a migrated, seeded local database and starts the API/web development servers. k6 defaults to 10 virtual users for one minute and enforces p95 below 500 ms, HTTP failures below 1%, and all critical checks passing.
+Integration tests refuse to reset a database unless `NODE_ENV=test` and the database name contains `test`. Start the Compose `postgres-test` profile and set the variables shown in `.env.example`. Playwright also requires `DATABASE_URL` to name a migrated test database, reseeds deterministic fixture credentials, and starts isolated API/web servers on ports 3100/5173. k6 defaults to 10 virtual users for one minute and enforces p95 below 500 ms, HTTP failures below 1%, and all critical checks passing.
 
 ## Core modules
 

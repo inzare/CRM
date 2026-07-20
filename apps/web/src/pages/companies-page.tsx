@@ -1,6 +1,6 @@
 import type { PaginatedResponse } from '@consultflow/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Globe2, Plus, Search, UserRoundPlus, X } from 'lucide-react';
+import { Building2, Globe2, MessageSquarePlus, Plus, Search, UserRoundPlus, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
 import { ApiError, apiRequest } from '../lib/api';
@@ -26,6 +26,15 @@ interface Contact {
   jobTitle: string | null;
   isDecisionMaker: boolean;
 }
+interface TimelineEvent {
+  id: string;
+  type: 'CALL' | 'MEETING' | 'EMAIL' | 'NOTE' | 'TASK';
+  timelineType: string;
+  subject: string;
+  body: string | null;
+  occurredAt: string;
+  creator: { name: string };
+}
 
 const emptyCompany = { name: '', industry: '', website: '', city: '', country: '', tags: '' };
 
@@ -35,6 +44,7 @@ export function CompaniesPage(): React.JSX.Element {
   const [selected, setSelected] = useState<Company | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showContact, setShowContact] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompany);
   const [contactForm, setContactForm] = useState({
     firstName: '',
@@ -42,6 +52,12 @@ export function CompaniesPage(): React.JSX.Element {
     email: '',
     jobTitle: '',
     isDecisionMaker: false,
+  });
+  const [activityForm, setActivityForm] = useState({
+    type: 'NOTE',
+    subject: '',
+    body: '',
+    occurredAt: '',
   });
   const companies = useQuery({
     queryKey: ['companies', search],
@@ -55,6 +71,14 @@ export function CompaniesPage(): React.JSX.Element {
     enabled: Boolean(selected),
     queryFn: () =>
       apiRequest<PaginatedResponse<Contact>>(`/companies/${String(selected?.id)}/contacts`),
+  });
+  const timeline = useQuery({
+    queryKey: ['company-timeline', selected?.id],
+    enabled: Boolean(selected),
+    queryFn: () =>
+      apiRequest<PaginatedResponse<TimelineEvent>>(
+        `/companies/${String(selected?.id)}/timeline?pageSize=20`,
+      ),
   });
   const createCompany = useMutation({
     mutationFn: () =>
@@ -99,6 +123,24 @@ export function CompaniesPage(): React.JSX.Element {
       });
       await client.invalidateQueries({ queryKey: ['company-contacts', selected?.id] });
       await client.invalidateQueries({ queryKey: ['companies'] });
+    },
+  });
+  const createActivity = useMutation({
+    mutationFn: () =>
+      apiRequest<TimelineEvent>('/activities', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...activityForm,
+          companyId: selected?.id,
+          occurredAt: activityForm.occurredAt
+            ? new Date(activityForm.occurredAt).toISOString()
+            : undefined,
+        }),
+      }),
+    onSuccess: async () => {
+      setShowActivity(false);
+      setActivityForm({ type: 'NOTE', subject: '', body: '', occurredAt: '' });
+      await client.invalidateQueries({ queryKey: ['company-timeline', selected?.id] });
     },
   });
   const submitCompany = (event: FormEvent) => {
@@ -261,6 +303,40 @@ export function CompaniesPage(): React.JSX.Element {
                   ))}
                 </ul>
               )}
+              <div className="my-5 border-t border-slate-200" />
+              <div className="flex items-center justify-between">
+                <h3 className="font-extrabold text-ink-950">Activity timeline</h3>
+                <button
+                  onClick={() => setShowActivity(true)}
+                  className="flex items-center gap-1 text-xs font-bold text-teal-600"
+                >
+                  <MessageSquarePlus className="size-4" />
+                  Log activity
+                </button>
+              </div>
+              {timeline.isLoading ? (
+                <p className="mt-4 text-sm">Loading activity?</p>
+              ) : (
+                <ol className="mt-3 grid max-h-80 gap-2 overflow-y-auto pr-1">
+                  {timeline.data?.data.map((event) => (
+                    <li key={event.id} className="rounded-xl border border-slate-200 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-ink-950">{event.subject}</span>
+                        <span className="rounded-full bg-cloud-100 px-2 py-0.5 text-[0.65rem] font-bold">
+                          {event.timelineType}
+                        </span>
+                      </div>
+                      {event.body && <p className="mt-1 text-xs text-ink-700">{event.body}</p>}
+                      <p className="mt-2 text-[0.7rem] text-ink-700">
+                        {event.creator.name} ? {new Date(event.occurredAt).toLocaleString()}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {timeline.data?.data.length === 0 && (
+                <p className="mt-3 text-sm text-ink-700">No activity logged yet.</p>
+              )}
             </>
           )}
         </aside>
@@ -372,6 +448,83 @@ export function CompaniesPage(): React.JSX.Element {
                 {error}
               </p>
             )}
+          </section>
+        </div>
+      )}
+      {showActivity && selected && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/55 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="activity-dialog-title"
+            className="surface w-full max-w-2xl rounded-2xl p-6"
+          >
+            <div className="flex items-center justify-between">
+              <h2 id="activity-dialog-title" className="text-xl font-black text-ink-950">
+                Log activity for {selected.name}
+              </h2>
+              <button
+                aria-label="Close dialog"
+                onClick={() => setShowActivity(false)}
+                className="rounded-lg p-2 hover:bg-cloud-100"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                createActivity.mutate();
+              }}
+              className="mt-6 grid gap-4 sm:grid-cols-2"
+            >
+              <label className="grid gap-2 text-sm font-semibold text-ink-900">
+                Activity type
+                <select
+                  value={activityForm.type}
+                  onChange={(event) =>
+                    setActivityForm({ ...activityForm, type: event.target.value })
+                  }
+                  className="h-11 rounded-xl border border-slate-300 px-3"
+                >
+                  {['CALL', 'MEETING', 'EMAIL', 'NOTE'].map((type) => (
+                    <option key={type}>{type}</option>
+                  ))}
+                </select>
+              </label>
+              <Field
+                label="Occurred at"
+                type="datetime-local"
+                value={activityForm.occurredAt}
+                onChange={(occurredAt) => setActivityForm({ ...activityForm, occurredAt })}
+              />
+              <div className="sm:col-span-2">
+                <Field
+                  label="Subject"
+                  required
+                  value={activityForm.subject}
+                  onChange={(subject) => setActivityForm({ ...activityForm, subject })}
+                />
+              </div>
+              <label className="grid gap-2 text-sm font-semibold text-ink-900 sm:col-span-2">
+                Notes
+                <textarea
+                  value={activityForm.body}
+                  onChange={(event) =>
+                    setActivityForm({ ...activityForm, body: event.target.value })
+                  }
+                  className="min-h-28 rounded-xl border border-slate-300 p-3"
+                />
+              </label>
+              <Submit pending={createActivity.isPending} />
+              {createActivity.error && (
+                <p role="alert" className="text-sm font-semibold text-red-700 sm:col-span-2">
+                  {createActivity.error instanceof ApiError
+                    ? createActivity.error.message
+                    : 'Activity could not be saved.'}
+                </p>
+              )}
+            </form>
           </section>
         </div>
       )}

@@ -405,6 +405,38 @@ describe('authentication and user authorization API', () => {
     expect(widgets.body).toHaveProperty('noRecentActivity');
   });
 
+  it('returns role-scoped dashboard metrics and formula-safe CSV reports', async () => {
+    const dashboard = await request(app.getHttpServer())
+      .get('/api/v1/dashboard')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(dashboard.body.sales).toMatchObject({ currency: 'USD' });
+    expect(dashboard.body.sales.pipeline).toHaveLength(7);
+    expect(Number(dashboard.body.sales.wonRevenue)).toBeGreaterThan(0);
+    const csv = await request(app.getHttpServer())
+      .get('/api/v1/reports/opportunities.csv')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect('Content-Type', /text\/csv/)
+      .expect(200);
+    expect(csv.text.charCodeAt(0)).toBe(0xfeff);
+    expect(csv.text).toContain('Modernization program');
+    const consultantLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: 'consultant@consultflow.local', password: 'ConsultFlow!2026' })
+      .expect(200);
+    const consultantToken = consultantLogin.body.accessToken as string;
+    const consultantDashboard = await request(app.getHttpServer())
+      .get('/api/v1/dashboard')
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .expect(200);
+    expect(consultantDashboard.body.sales).toBeNull();
+    expect(consultantDashboard.body).toHaveProperty('today');
+    await request(app.getHttpServer())
+      .get('/api/v1/reports/opportunities.csv')
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .expect(403);
+  });
+
   it('consumes password reset tokens once and revokes old credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')

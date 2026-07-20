@@ -15,6 +15,7 @@ import { validateEnvironment } from './config/environment';
 import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
+import { ReportingModule } from './reporting/reporting.module';
 import { SalesModule } from './sales/sales.module';
 import { UsersModule } from './users/users.module';
 
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     SalesModule,
     CommercialModule,
     ActivitiesModule,
+    ReportingModule,
   ],
   controllers: [HealthController],
   providers: [

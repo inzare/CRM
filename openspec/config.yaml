@@ -1,0 +1,43 @@
+schema: spec-driven
+
+context: |
+  Product: ConsultFlow CRM for software consulting and software-product sales.
+  Architecture: npm workspaces monorepo with React/TypeScript/Vite frontend,
+  NestJS REST API, Prisma/PostgreSQL, Docker Compose, and Terraform for AWS.
+  Security: JWT access/refresh tokens, Argon2, RBAC roles ADMIN/MANAGER/SALES/CONSULTANT,
+  auditable mutations, least privilege, safe errors, and environment-based secrets.
+  Quality: strict TypeScript, lint/format/typecheck, unit/integration/Playwright/k6 tests,
+  WCAG-oriented UI basics, and requirement-to-task-to-test traceability.
+
+rules:
+  proposal:
+    - Identify every new product capability that needs a behavioral specification.
+    - Keep implementation details in design.md.
+  design:
+    - Document architecture, security boundaries, data model, deployment, observability, and trade-offs.
+    - Record production-oriented defaults and explicit non-goals.
+  specs:
+    - Give every requirement a stable capability-prefixed identifier.
+    - Include purpose, functional requirements, acceptance criteria, edge cases, authorization rules, API behavior, and test scenarios.
+  tasks:
+    - Give every task a stable identifier and reference requirement IDs plus intended test coverage.
+    - Keep tasks small enough to implement and review independently.
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

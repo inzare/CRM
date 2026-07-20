@@ -56,6 +56,24 @@ export default tseslint.config(
     },
   },
   {
+    files: ['tests/e2e/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.e2e.json'],
+        projectService: false,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['tests/performance/*.js'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' },
+    },
+  },
+  {
     files: ['scripts/*.mjs'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',

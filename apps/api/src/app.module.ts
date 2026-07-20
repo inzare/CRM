@@ -19,10 +19,12 @@ import { ReportingModule } from './reporting/reporting.module';
 import { SalesModule } from './sales/sales.module';
 import { UsersModule } from './users/users.module';
 
+const GLOBAL_RATE_LIMIT = Number.parseInt(process.env.GLOBAL_RATE_LIMIT ?? '120', 10);
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: GLOBAL_RATE_LIMIT }]),
     DatabaseModule,
     AuditModule,
     AuthModule,

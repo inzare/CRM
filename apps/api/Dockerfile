@@ -7,6 +7,7 @@ COPY packages/contracts/package.json packages/contracts/package.json
 RUN npm ci
 
 FROM dependencies AS build
+ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
 COPY tsconfig.base.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
@@ -20,6 +21,8 @@ WORKDIR /app
 RUN addgroup -S nodejs && adduser -S consultflow -G nodejs
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
 COPY package.json ./
 USER consultflow
 EXPOSE 3000

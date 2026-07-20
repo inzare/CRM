@@ -12,6 +12,8 @@ const schema = z
     CORS_ORIGINS: z.string().default('http://localhost:5173'),
     ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+    LOGIN_RATE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(5),
+    GLOBAL_RATE_LIMIT: z.coerce.number().int().min(1).max(100_000).default(120),
     APP_TIMEZONE: z.string().default('America/Mexico_City'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     SWAGGER_ENABLED: z.string().optional(),

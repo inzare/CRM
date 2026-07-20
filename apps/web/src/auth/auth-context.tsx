@@ -1,5 +1,13 @@
 import type { Role } from '@consultflow/contracts';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { apiRequest, registerRefreshHandler, setAccessToken } from '../lib/api';
 
@@ -29,23 +37,35 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const refreshInFlight = useRef<Promise<boolean> | null>(null);
 
-  const refresh = useCallback(async (): Promise<boolean> => {
-    try {
-      const session = await apiRequest<SessionResponse>('/auth/refresh', { method: 'POST' }, false);
-      setAccessToken(session.accessToken);
-      setUser(session.user);
-      return true;
-    } catch {
-      setAccessToken(null);
-      setUser(null);
-      return false;
-    }
+  const refresh = useCallback((): Promise<boolean> => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      try {
+        const session = await apiRequest<SessionResponse>(
+          '/auth/refresh',
+          { method: 'POST' },
+          false,
+        );
+        setAccessToken(session.accessToken);
+        setUser(session.user);
+        return true;
+      } catch {
+        setAccessToken(null);
+        setUser(null);
+        return false;
+      }
+    })();
+    refreshInFlight.current = request;
+    void request.finally(() => {
+      if (refreshInFlight.current === request) refreshInFlight.current = null;
+    });
+    return request;
   }, []);
 
   useEffect(() => registerRefreshHandler(refresh), [refresh]);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh().finally(() => setLoading(false));
   }, [refresh]);
 

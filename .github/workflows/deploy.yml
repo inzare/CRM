@@ -1,0 +1,58 @@
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        { description: 'Terraform action', type: choice, options: [plan, apply], default: plan }
+      image_tag: { description: 'Immutable API image tag (normally commit SHA)', required: true }
+      rollback_task_definition:
+        { description: 'Optional prior task definition ARN for rollback', required: false }
+permissions: { contents: read, id-token: write }
+concurrency: { group: consultflow-production, cancel-in-progress: false }
+jobs:
+  deploy:
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          {
+            role-to-assume: '${{ secrets.AWS_DEPLOY_ROLE_ARN }}',
+            aws-region: '${{ vars.AWS_REGION }}',
+          }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.9.8 }
+      - run: terraform -chdir=infra/terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=consultflow/production.tfstate" -backend-config="region=${{ vars.AWS_REGION }}" -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" -backend-config="encrypt=true"
+      - name: Plan
+        run: terraform -chdir=infra/terraform plan -out=deploy.tfplan -var-file=production.tfvars -var="api_image=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/${{ vars.ECR_REPOSITORY }}:${{ inputs.image_tag }}"
+      - name: Apply
+        if: inputs.action == 'apply'
+        run: terraform -chdir=infra/terraform apply -auto-approve deploy.tfplan
+      - name: Run database migration task
+        if: inputs.action == 'apply'
+        run: |
+          TASK_DEF=$(terraform -chdir=infra/terraform output -raw ecs_task_definition_family)
+          CLUSTER=$(terraform -chdir=infra/terraform output -raw ecs_cluster_name)
+          aws ecs run-task --cluster "$CLUSTER" --launch-type FARGATE --task-definition "$TASK_DEF" --network-configuration "awsvpcConfiguration={subnets=[${{ vars.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ vars.API_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" --overrides '{"containerOverrides":[{"name":"api","command":["npx","prisma","migrate","deploy"]}]}'
+      - name: Wait for API stability
+        if: inputs.action == 'apply'
+        run: aws ecs wait services-stable --cluster "$(terraform -chdir=infra/terraform output -raw ecs_cluster_name)" --services "$(terraform -chdir=infra/terraform output -raw ecs_service_name)"
+      - uses: actions/setup-node@v4
+        if: inputs.action == 'apply'
+        with: { node-version: 22, cache: npm }
+      - name: Publish frontend
+        if: inputs.action == 'apply'
+        env: { VITE_API_URL: '${{ vars.PUBLIC_API_URL }}/api/v1' }
+        run: |
+          npm ci
+          npm run build -w @consultflow/web
+          aws s3 sync apps/web/dist "s3://$(terraform -chdir=infra/terraform output -raw frontend_bucket)" --delete --cache-control "public,max-age=31536000,immutable" --exclude index.html
+          aws s3 cp apps/web/dist/index.html "s3://$(terraform -chdir=infra/terraform output -raw frontend_bucket)/index.html" --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "$(terraform -chdir=infra/terraform output -raw cloudfront_distribution_id)" --paths '/*'
+      - name: Smoke check
+        if: inputs.action == 'apply'
+        run: curl --fail --retry 12 --retry-delay 10 "${{ vars.PUBLIC_API_URL }}/api/v1/health/ready"
+      - name: Roll back ECS task definition
+        if: failure() && inputs.rollback_task_definition != ''
+        run: aws ecs update-service --cluster "$(terraform -chdir=infra/terraform output -raw ecs_cluster_name)" --service "$(terraform -chdir=infra/terraform output -raw ecs_service_name)" --task-definition "${{ inputs.rollback_task_definition }}" --force-new-deployment

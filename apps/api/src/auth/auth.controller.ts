@@ -32,6 +32,7 @@ import type { AuthenticatedUser } from './auth.types';
 import { CurrentUser } from './current-user.decorator';
 
 const REFRESH_COOKIE = 'consultflow_refresh';
+const LOGIN_RATE_LIMIT = Number.parseInt(process.env.LOGIN_RATE_LIMIT ?? '5', 10);
 
 @ApiTags('authentication')
 @Controller('auth')
@@ -43,7 +44,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: LOGIN_RATE_LIMIT, ttl: 60_000 } })
   @ApiOperation({ summary: 'Authenticate with email and password' })
   async login(
     @Body() input: LoginDto,

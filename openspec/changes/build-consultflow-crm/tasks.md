@@ -1,16 +1,16 @@
 ## 1. Monorepo and Developer Foundation
 
-- [ ] 1.1 Create npm workspace layout, strict shared TypeScript/ESLint/Prettier configuration, root scripts, lockfile, and package boundaries. [PO-004, PO-007; verify clean install, format, lint, typecheck]
-- [ ] 1.2 Scaffold NestJS API and React/Vite/Tailwind web applications with shared contracts, environment validation, and production builds. [PO-001, PO-003, PO-009; unit/build tests]
-- [ ] 1.3 Add `.env.example`, secret-safe configuration schema, request IDs, structured redacted logging, global validation/error handling, Helmet, CORS, shutdown hooks, and live/ready health endpoints. [PO-001, PO-003, PO-006; configuration/error/health tests]
-- [ ] 1.4 Add Dockerfiles and Docker Compose for PostgreSQL, API, and web with health checks, volumes, migration/seed flow, and isolated test database profile. [PO-002, PO-004; container smoke tests]
+- [x] 1.1 Create npm workspace layout, strict shared TypeScript/ESLint/Prettier configuration, root scripts, lockfile, and package boundaries. [PO-004, PO-007; verify clean install, format, lint, typecheck]
+- [x] 1.2 Scaffold NestJS API and React/Vite/Tailwind web applications with shared contracts, environment validation, and production builds. [PO-001, PO-003, PO-009; unit/build tests]
+- [x] 1.3 Add `.env.example`, secret-safe configuration schema, request IDs, structured redacted logging, global validation/error handling, Helmet, CORS, shutdown hooks, and live/ready health endpoints. [PO-001, PO-003, PO-006; configuration/error/health tests]
+- [x] 1.4 Add Dockerfiles and Docker Compose for PostgreSQL, API, and web with health checks, volumes, migration/seed flow, and isolated test database profile. [PO-002, PO-004; container smoke tests]
 
 ## 2. Database and Shared Domain
 
-- [ ] 2.1 Implement normalized Prisma schema for users, sessions, reset/invite tokens, audit logs, and role/status enums with constraints and indexes. [IA-001..005, UAA-001..005; Prisma validation/integration tests]
-- [ ] 2.2 Implement customer, sales-pipeline, stage/history, catalog/offering, quote/line, contract, activity/task, tag, and relationship models with Decimal/date/soft-delete semantics. [CR-001..005, SP-001..006, CL-001..006, AT-001..005; schema constraint tests]
-- [ ] 2.3 Create initial migration including PostgreSQL check constraints and full-text GIN/index SQL, plus deterministic realistic seed data for all roles and linked workflows. [PO-002, CR-003, SP-001; migration/bootstrap/search tests]
-- [ ] 2.4 Implement Prisma module, transaction helpers, safe database-error mapping, standard pagination/filter/sort/search utilities, and reusable authorization scope predicates. [IA-005, CR-003, PO-001..003; unit/integration tests]
+- [x] 2.1 Implement normalized Prisma schema for users, sessions, reset/invite tokens, audit logs, and role/status enums with constraints and indexes. [IA-001..005, UAA-001..005; Prisma validation/integration tests]
+- [x] 2.2 Implement customer, sales-pipeline, stage/history, catalog/offering, quote/line, contract, activity/task, tag, and relationship models with Decimal/date/soft-delete semantics. [CR-001..005, SP-001..006, CL-001..006, AT-001..005; schema constraint tests]
+- [x] 2.3 Create initial migration including PostgreSQL check constraints and full-text GIN/index SQL, plus deterministic realistic seed data for all roles and linked workflows. [PO-002, CR-003, SP-001; migration/bootstrap/search tests]
+- [x] 2.4 Implement Prisma module, transaction helpers, safe database-error mapping, standard pagination/filter/sort/search utilities, and reusable authorization scope predicates. [IA-005, CR-003, PO-001..003; unit/integration tests]
 
 ## 3. Identity, Authorization, Users, and Audit
 

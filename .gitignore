@@ -1,5 +1,7 @@
 node_modules/
 dist/
+apps/api/src/generated/
+prisma/generated/
 coverage/
 .vite/
 .turbo/

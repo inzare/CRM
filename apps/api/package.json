@@ -6,11 +6,12 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1090.0",
     "@consultflow/contracts": "^0.1.0",
     "@nestjs/cli": "^11.0.24",
     "@nestjs/common": "^11.1.28",

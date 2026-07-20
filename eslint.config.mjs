@@ -25,7 +25,7 @@ export default tseslint.config(
       globals: { ...globals.node, ...globals.browser },
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['*.config.ts', 'apps/api/*.config.ts'],
+          allowDefaultProject: ['*.config.ts', 'apps/api/*.config.ts', 'scripts/*.mjs'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -37,6 +37,29 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       'import/order': ['error', { alphabetize: { order: 'asc' }, 'newlines-between': 'always' }],
+    },
+  },
+  {
+    files: ['apps/api/test/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./apps/api/tsconfig.test.json'],
+        projectService: false,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+    },
+  },
+  {
+    files: ['scripts/*.mjs'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
     },
   },
   {

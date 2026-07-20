@@ -13,7 +13,7 @@ describe('validateEnvironment', () => {
     const environment = validateEnvironment(valid);
     expect(environment.PORT).toBe(3000);
     expect(environment.CORS_ORIGINS).toBe('http://localhost:5173');
-    expect(environment.ACCESS_TOKEN_TTL).toBe('15m');
+    expect(environment.ACCESS_TOKEN_TTL_SECONDS).toBe(900);
   });
 
   it('fails closed on production placeholder secrets', () => {

@@ -14,6 +14,10 @@ export function requestIdMiddleware(
   next();
 }
 
+export function requestIdOf(request: Request): string {
+  return typeof request.id === 'string' ? request.id : 'unknown';
+}
+
 declare global {
   // Express exposes request augmentation through its namespace declaration.
   // eslint-disable-next-line @typescript-eslint/no-namespace

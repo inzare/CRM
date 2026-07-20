@@ -10,11 +10,15 @@ const schema = z
     JWT_ACCESS_SECRET: z.string().min(32),
     JWT_REFRESH_PEPPER: z.string().min(32),
     CORS_ORIGINS: z.string().default('http://localhost:5173'),
-    ACCESS_TOKEN_TTL: z.string().default('15m'),
+    ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
     APP_TIMEZONE: z.string().default('America/Mexico_City'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     SWAGGER_ENABLED: z.string().optional(),
+    EMAIL_PROVIDER: z.enum(['console', 'ses']).default('console'),
+    EMAIL_FROM: z.string().email().default('noreply@consultflow.local'),
+    APP_BASE_URL: z.string().url().default('http://localhost:5173'),
+    AWS_REGION: z.string().default('us-east-1'),
   })
   .superRefine((value, context) => {
     if (value.NODE_ENV !== 'production') return;
@@ -35,6 +39,13 @@ const schema = z
         code: 'custom',
         path: ['CORS_ORIGINS'],
         message: 'wildcards are forbidden',
+      });
+    }
+    if (value.EMAIL_PROVIDER !== 'ses') {
+      context.addIssue({
+        code: 'custom',
+        path: ['EMAIL_PROVIDER'],
+        message: 'production requires the SES provider',
       });
     }
   });

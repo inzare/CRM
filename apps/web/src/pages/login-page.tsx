@@ -1,8 +1,33 @@
 import { ArrowRight, CheckCircle2, LockKeyhole } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { useAuth } from '../auth/auth-context';
 import { Logo } from '../components/logo';
+import { ApiError } from '../lib/api';
 
 export function LoginPage(): React.JSX.Element {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    try {
+      await login(email, password);
+      void navigate('/', { replace: true });
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Sign in is temporarily unavailable.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <main className="grid min-h-screen bg-cloud-50 lg:grid-cols-[1.08fr_0.92fr]">
       <section className="relative hidden overflow-hidden bg-ink-950 p-12 text-white lg:flex lg:flex-col lg:justify-between">
@@ -50,7 +75,19 @@ export function LoginPage(): React.JSX.Element {
               Sign in to continue to your ConsultFlow workspace.
             </p>
           </div>
-          <form className="grid gap-5" aria-label="Sign in">
+          <form
+            className="grid gap-5"
+            aria-label="Sign in"
+            onSubmit={(event) => void submit(event)}
+          >
+            {error && (
+              <p
+                role="alert"
+                className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800"
+              >
+                {error}
+              </p>
+            )}
             <label className="grid gap-2 text-sm font-semibold text-ink-900">
               Email address
               <input
@@ -60,6 +97,8 @@ export function LoginPage(): React.JSX.Element {
                 autoComplete="email"
                 required
                 placeholder="you@company.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
               />
             </label>
             <label className="grid gap-2 text-sm font-semibold text-ink-900">
@@ -70,6 +109,8 @@ export function LoginPage(): React.JSX.Element {
                 type="password"
                 autoComplete="current-password"
                 required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
               />
             </label>
             <div className="flex items-center justify-between text-sm">
@@ -87,8 +128,9 @@ export function LoginPage(): React.JSX.Element {
             <button
               className="mt-2 flex h-12 items-center justify-center gap-2 rounded-xl bg-ink-950 px-5 font-bold text-white shadow-lg shadow-ink-950/15 transition hover:bg-ink-900"
               type="submit"
+              disabled={submitting}
             >
-              Sign in
+              {submitting ? 'Signing in?' : 'Sign in'}
               <ArrowRight className="size-4" aria-hidden="true" />
             </button>
           </form>

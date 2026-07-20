@@ -14,9 +14,9 @@
 
 ## 3. Identity, Authorization, Users, and Audit
 
-- [ ] 3.1 Implement Argon2id password policy/hashing, access JWT issuance/verification, hashed refresh sessions, atomic rotation/replay-family revocation, cookie policy, logout, and session cleanup. [IA-001, IA-002; unit and PostgreSQL integration tests]
+- [x] 3.1 Implement Argon2id password policy/hashing, access JWT issuance/verification, hashed refresh sessions, atomic rotation/replay-family revocation, cookie policy, logout, and session cleanup. [IA-001, IA-002; unit and PostgreSQL integration tests]
 - [ ] 3.2 Implement throttled login plus reset request/confirmation and invitation tokens through a notification provider with safe local and SES-ready adapters. [IA-001, IA-003, UAA-001; unit/integration tests for enumeration, expiry, single use]
-- [ ] 3.3 Implement authentication, role, and resource-scope guards/decorators plus a protected-controller architecture test. [IA-005, PO-003; guard/scope/direct-ID authorization tests]
+- [x] 3.3 Implement authentication, role, and resource-scope guards/decorators plus a protected-controller architecture test. [IA-005, PO-003; guard/scope/direct-ID authorization tests]
 - [ ] 3.4 Implement `/me` profile/password flows with validation, password-change session revocation, and safe DTOs. [IA-004; unit/integration/component tests]
 - [ ] 3.5 Implement ADMIN user list/create/invite/update/activate/deactivate APIs, last-active-admin concurrency invariant, assignee summaries, and role/email session revocation. [UAA-001..003; unit/integration tests]
 - [ ] 3.6 Implement transactional immutable audit service and ADMIN read API with required event producers, filters, redaction, and retention across deletion. [UAA-005; audit atomicity/redaction/immutability tests]

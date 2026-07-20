@@ -1,4 +1,5 @@
 node_modules/
+*.tsbuildinfo
 dist/
 apps/api/src/generated/
 prisma/generated/

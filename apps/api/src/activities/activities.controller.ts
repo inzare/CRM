@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -19,7 +20,13 @@ import type { AuthenticatedUser, RequestMetadata } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { requestIdOf } from '../common/request-id.middleware';
 
-import { ActivityDto, TaskDto, TaskListQueryDto } from './activities.dto';
+import {
+  ActivityDto,
+  TaskDto,
+  TaskListQueryDto,
+  UpdateActivityDto,
+  UpdateTaskDto,
+} from './activities.dto';
 import { ActivitiesService } from './activities.service';
 @ApiTags('activities')
 @ApiBearerAuth()
@@ -40,6 +47,14 @@ export class ActivitiesController {
   ) {
     return this.activities.createActivity(input, actor, metadata(request));
   }
+  @Patch('activities/:id') updateActivity(
+    @Param('id') id: string,
+    @Body() input: UpdateActivityDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.activities.updateActivity(id, input, actor, metadata(request));
+  }
   @Delete('activities/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteActivity(
     @Param('id') id: string,
     @CurrentUser() actor: AuthenticatedUser,
@@ -56,6 +71,21 @@ export class ActivitiesController {
     @Req() request: Request,
   ) {
     return this.activities.createTask(input, actor, metadata(request));
+  }
+  @Patch('tasks/:id') updateTask(
+    @Param('id') id: string,
+    @Body() input: UpdateTaskDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.activities.updateTask(id, input, actor, metadata(request));
+  }
+  @Delete('tasks/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteTask(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.activities.deleteTask(id, actor, metadata(request));
   }
   @Post('tasks/:id/complete') complete(
     @Param('id') id: string,

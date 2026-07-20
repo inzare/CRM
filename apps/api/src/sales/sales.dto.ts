@@ -1,5 +1,7 @@
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsIn,
   IsInt,
@@ -36,6 +38,7 @@ export class CreateLeadDto {
   @IsOptional() @IsString() @MaxLength(10000) qualificationNotes?: string;
   @IsOptional() @IsUUID() ownerId?: string;
 }
+export class UpdateLeadDto extends PartialType(CreateLeadDto) {}
 
 export class QualifyLeadDto {
   @IsString() @MaxLength(10000) qualificationNotes!: string;
@@ -59,6 +62,9 @@ export class CreateOpportunityDto {
   @IsDateString() closeDate!: string;
   @IsOptional() @IsString() @MaxLength(10000) notes?: string;
 }
+export class UpdateOpportunityDto extends PartialType(
+  OmitType(CreateOpportunityDto, ['stageId'] as const),
+) {}
 
 export class TransitionOpportunityDto {
   @IsUUID() expectedStageId!: string;
@@ -73,4 +79,5 @@ export class UpdateStageDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) order?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) defaultProbability?: number;
   @IsOptional() isActive?: boolean;
+  @IsOptional() @IsArray() @IsUUID('4', { each: true }) allowedToStageIds?: string[];
 }

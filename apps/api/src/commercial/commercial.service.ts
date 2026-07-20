@@ -24,6 +24,8 @@ import type {
   CreateQuoteDto,
   OpportunityItemDto,
   RenewalQueryDto,
+  UpdateContractDto,
+  UpdateQuoteDto,
 } from './commercial.dto';
 import { calculateQuote } from './quote-calculator';
 
@@ -137,7 +139,12 @@ export class CommercialService {
       return updated;
     });
   }
-  async addOffering(opportunityId: string, input: OpportunityItemDto, actor: AuthenticatedActor) {
+  async addOffering(
+    opportunityId: string,
+    input: OpportunityItemDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
     const opportunity = await this.prisma.opportunity.findFirst({
       where: { id: opportunityId, deletedAt: null, ...ownerScope(actor) },
       include: { stage: true },
@@ -158,22 +165,71 @@ export class CommercialService {
         code: 'INVALID_QUANTITY',
         message: 'Quantity must be greater than zero.',
       });
-    return this.prisma.opportunityItem.upsert({
-      where: { opportunityId_catalogItemId: { opportunityId, catalogItemId: item.id } },
-      update: {
-        quantity,
-        unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
-        billingNotes: input.billingNotes?.trim() ?? null,
-      },
-      create: {
-        opportunityId,
-        catalogItemId: item.id,
-        quantity,
-        unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
-        currency: item.currency,
-        billingNotes: input.billingNotes?.trim() ?? null,
-      },
-      include: { catalogItem: true },
+    return this.prisma.$transaction(async (database) => {
+      const offering = await database.opportunityItem.upsert({
+        where: { opportunityId_catalogItemId: { opportunityId, catalogItemId: item.id } },
+        update: {
+          quantity,
+          unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
+          billingNotes: input.billingNotes?.trim() ?? null,
+        },
+        create: {
+          opportunityId,
+          catalogItemId: item.id,
+          quantity,
+          unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
+          currency: item.currency,
+          billingNotes: input.billingNotes?.trim() ?? null,
+        },
+        include: { catalogItem: true },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'OPPORTUNITY_OFFERING_UPSERTED',
+          entityType: 'Opportunity',
+          entityId: opportunityId,
+          requestId: metadata.requestId,
+          after: { catalogItemId: item.id, quantity: quantity.toString() },
+        },
+        database,
+      );
+      return offering;
+    });
+  }
+  async removeOffering(
+    opportunityId: string,
+    catalogItemId: string,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ): Promise<void> {
+    const opportunity = await this.prisma.opportunity.findFirst({
+      where: { id: opportunityId, deletedAt: null, ...ownerScope(actor) },
+      include: { stage: true },
+    });
+    if (!opportunity) throw this.notFound('Opportunity');
+    if (opportunity.stage.type !== StageType.OPEN)
+      throw new ConflictException({
+        code: 'TERMINAL_OPPORTUNITY',
+        message: 'Offerings cannot be changed on a closed opportunity.',
+      });
+    const current = await this.prisma.opportunityItem.findUnique({
+      where: { opportunityId_catalogItemId: { opportunityId, catalogItemId } },
+    });
+    if (!current) throw this.notFound('Opportunity offering');
+    await this.prisma.$transaction(async (database) => {
+      await database.opportunityItem.delete({ where: { id: current.id } });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'OPPORTUNITY_OFFERING_REMOVED',
+          entityType: 'Opportunity',
+          entityId: opportunityId,
+          requestId: metadata.requestId,
+          before: { catalogItemId, quantity: current.quantity.toString() },
+        },
+        database,
+      );
     });
   }
   async createQuote(input: CreateQuoteDto, actor: AuthenticatedActor, metadata: RequestMetadata) {
@@ -218,6 +274,52 @@ export class CommercialService {
       );
       return quote;
     }, serializableTransaction);
+  }
+  async updateQuote(
+    id: string,
+    input: UpdateQuoteDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const calculation = calculateQuote(input.lines);
+    return this.prisma.$transaction(async (database) => {
+      const current = await database.quote.findFirst({
+        where: { id, opportunity: { deletedAt: null, ...ownerScope(actor) } },
+      });
+      if (!current) throw this.notFound('Quote');
+      if (current.status !== QuoteStatus.DRAFT)
+        throw new ConflictException({
+          code: 'QUOTE_IMMUTABLE',
+          message: 'Only draft quotes can be edited; create a new version instead.',
+        });
+      await database.quoteLine.deleteMany({ where: { quoteId: id } });
+      const updated = await database.quote.update({
+        where: { id },
+        data: {
+          validUntil: new Date(input.validUntil),
+          notes: input.notes?.trim() ?? null,
+          subtotal: calculation.subtotal,
+          discountTotal: calculation.discountTotal,
+          taxTotal: calculation.taxTotal,
+          total: calculation.total,
+          lines: { create: calculation.lines },
+        },
+        include: quoteInclude,
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'QUOTE_UPDATED',
+          entityType: 'Quote',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { total: current.total.toString() },
+          after: { total: updated.total.toString() },
+        },
+        database,
+      );
+      return updated;
+    });
   }
   async quotes(query: CommercialListQueryDto, actor: AuthenticatedActor) {
     const where: Prisma.QuoteWhereInput = {
@@ -415,6 +517,98 @@ export class CommercialService {
       this.prisma.contract.count({ where }),
     ]);
     return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  async contract(id: string, actor: AuthenticatedActor) {
+    const contract = await this.prisma.contract.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+      include: {
+        opportunity: { include: { company: true } },
+        quote: true,
+        owner: { select: { id: true, name: true } },
+      },
+    });
+    if (!contract) throw this.notFound('Contract');
+    return contract;
+  }
+  async updateContract(
+    id: string,
+    input: UpdateContractDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.prisma.contract.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+    });
+    if (!current) throw this.notFound('Contract');
+    const start = input.startDate ? new Date(input.startDate) : current.startDate;
+    const end = input.endDate ? new Date(input.endDate) : current.endDate;
+    const renewal = input.renewalDate ? new Date(input.renewalDate) : current.renewalDate;
+    if ((end && end < start) || (renewal && renewal < start))
+      throw new UnprocessableEntityException({
+        code: 'INVALID_CONTRACT_DATES',
+        message: 'End and renewal dates must not precede the start date.',
+      });
+    const ownerId = canManageAllRecords(actor) && input.ownerId ? input.ownerId : current.ownerId;
+    return this.prisma.$transaction(async (database) => {
+      const updated = await database.contract.update({
+        where: { id },
+        data: {
+          ...(input.number !== undefined ? { number: input.number.trim() } : {}),
+          ...(input.startDate !== undefined ? { startDate: start } : {}),
+          ...(input.endDate !== undefined ? { endDate: end } : {}),
+          ...(input.renewalDate !== undefined ? { renewalDate: renewal } : {}),
+          ...(input.amount !== undefined ? { amount: new Prisma.Decimal(input.amount) } : {}),
+          ...(input.currency !== undefined ? { currency: input.currency.toUpperCase() } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.renewalNotes !== undefined
+            ? { renewalNotes: input.renewalNotes.trim() || null }
+            : {}),
+          ownerId,
+        },
+        include: {
+          opportunity: { include: { company: true } },
+          quote: true,
+          owner: { select: { id: true, name: true } },
+        },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'CONTRACT_UPDATED',
+          entityType: 'Contract',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { status: current.status, ownerId: current.ownerId },
+          after: { status: updated.status, ownerId: updated.ownerId },
+        },
+        database,
+      );
+      return updated;
+    });
+  }
+  async deleteContract(
+    id: string,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ): Promise<void> {
+    const current = await this.prisma.contract.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+    });
+    if (!current) throw this.notFound('Contract');
+    await this.prisma.$transaction(async (database) => {
+      await database.contract.update({ where: { id }, data: { deletedAt: new Date() } });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'CONTRACT_DELETED',
+          entityType: 'Contract',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { number: current.number, status: current.status },
+        },
+        database,
+      );
+    });
   }
   private notFound(entity: string) {
     return new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: `${entity} not found.` });

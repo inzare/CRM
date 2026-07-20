@@ -1,3 +1,4 @@
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -56,6 +57,7 @@ export class CreateQuoteDto {
   @IsOptional() @IsString() @MaxLength(10000) notes?: string;
   @IsArray() @ValidateNested({ each: true }) @Type(() => QuoteLineDto) lines!: QuoteLineDto[];
 }
+export class UpdateQuoteDto extends OmitType(CreateQuoteDto, ['opportunityId'] as const) {}
 export class TransitionQuoteDto {
   @IsEnum(QuoteStatus) status!: QuoteStatus;
 }
@@ -72,6 +74,9 @@ export class CreateContractDto {
   @IsOptional() @IsEnum(ContractStatus) status?: ContractStatus;
   @IsOptional() @IsString() @MaxLength(10000) renewalNotes?: string;
 }
+export class UpdateContractDto extends PartialType(
+  OmitType(CreateContractDto, ['opportunityId', 'quoteId'] as const),
+) {}
 export class RenewalQueryDto extends PageQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) days = 90;
 }

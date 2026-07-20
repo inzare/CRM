@@ -1,3 +1,4 @@
+import { PartialType } from '@nestjs/swagger';
 import { IsDateString, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 import { PageQueryDto } from '../common/pagination';
@@ -13,6 +14,7 @@ export class ActivityDto {
   @IsOptional() @IsUUID() leadId?: string;
   @IsOptional() @IsUUID() opportunityId?: string;
 }
+export class UpdateActivityDto extends PartialType(ActivityDto) {}
 export class TaskDto {
   @IsString() @MaxLength(240) subject!: string;
   @IsOptional() @IsString() @MaxLength(10000) description?: string;
@@ -24,6 +26,7 @@ export class TaskDto {
   @IsOptional() @IsUUID() leadId?: string;
   @IsOptional() @IsUUID() opportunityId?: string;
 }
+export class UpdateTaskDto extends PartialType(TaskDto) {}
 export class TaskListQueryDto extends PageQueryDto {
   @IsOptional() @IsEnum(TaskStatus) status?: TaskStatus;
   @IsOptional() @IsUUID() assigneeId?: string;

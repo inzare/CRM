@@ -1,24 +1,35 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { AuditService } from '../audit/audit.service';
 import type { RequestMetadata } from '../auth/auth.types';
 import { canManageAllRecords, type AuthenticatedActor } from '../common/authorization-scope';
 import { pageMeta } from '../common/pagination';
+import type { Environment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
 import { ActivityType, Prisma, TaskStatus } from '../generated/prisma/client';
 
-import { TaskListQueryDto, type ActivityDto, type TaskDto } from './activities.dto';
+import {
+  TaskListQueryDto,
+  type ActivityDto,
+  type TaskDto,
+  type UpdateActivityDto,
+  type UpdateTaskDto,
+} from './activities.dto';
+import { businessDayBounds } from './business-time';
 
 @Injectable()
 export class ActivitiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly config: ConfigService<Environment, true>,
   ) {}
   async createActivity(input: ActivityDto, actor: AuthenticatedActor, metadata: RequestMetadata) {
     this.oneParent(input);
@@ -82,6 +93,65 @@ export class ActivitiesService {
       this.prisma.activity.count({ where }),
     ]);
     return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  async updateActivity(
+    id: string,
+    input: UpdateActivityDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.prisma.activity.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(canManageAllRecords(actor) ? {} : { creatorId: actor.id }),
+      },
+    });
+    if (!current) throw this.notFound('Activity');
+    const linkChanged = [input.companyId, input.contactId, input.leadId, input.opportunityId].some(
+      (value) => value !== undefined,
+    );
+    const link = linkChanged
+      ? {
+          companyId: input.companyId ?? null,
+          contactId: input.contactId ?? null,
+          leadId: input.leadId ?? null,
+          opportunityId: input.opportunityId ?? null,
+        }
+      : {
+          companyId: current.companyId,
+          contactId: current.contactId,
+          leadId: current.leadId,
+          opportunityId: current.opportunityId,
+        };
+    this.oneParent(link);
+    await this.parentAccess(link, actor);
+    return this.prisma.$transaction(async (database) => {
+      const updated = await database.activity.update({
+        where: { id },
+        data: {
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.subject !== undefined ? { subject: input.subject.trim() } : {}),
+          ...(input.body !== undefined ? { body: input.body.trim() || null } : {}),
+          ...(input.occurredAt !== undefined ? { occurredAt: new Date(input.occurredAt) } : {}),
+          ...link,
+        },
+        include: { creator: { select: { id: true, name: true } } },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'ACTIVITY_UPDATED',
+          entityType: 'Activity',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { subject: current.subject, type: current.type },
+          after: { subject: updated.subject, type: updated.type },
+        },
+        database,
+      );
+      return updated;
+    });
   }
   async deleteActivity(
     id: string,
@@ -168,10 +238,7 @@ export class ActivitiesService {
   }
   async tasks(query: TaskListQueryDto, actor: AuthenticatedActor) {
     const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const { start, end } = businessDayBounds(now, this.config.get('APP_TIMEZONE', { infer: true }));
     const where: Prisma.TaskWhereInput = {
       deletedAt: null,
       ...(canManageAllRecords(actor) && query.assigneeId
@@ -205,6 +272,126 @@ export class ActivitiesService {
       this.prisma.task.count({ where }),
     ]);
     return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  async updateTask(
+    id: string,
+    input: UpdateTaskDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.prisma.task.findFirst({ where: { id, deletedAt: null } });
+    if (!current) throw this.notFound('Task');
+    if (
+      !canManageAllRecords(actor) &&
+      current.creatorId !== actor.id &&
+      current.assigneeId !== actor.id
+    )
+      throw new ForbiddenException({
+        code: 'TASK_ACCESS_DENIED',
+        message: 'You cannot update this task.',
+      });
+    const assigneeId = input.assigneeId ?? current.assigneeId;
+    if (
+      !(await this.prisma.user.findFirst({
+        where: { id: assigneeId, isActive: true, deletedAt: null },
+      }))
+    )
+      throw new BadRequestException({
+        code: 'INVALID_ASSIGNEE',
+        message: 'Choose an active assignee.',
+      });
+    const linkChanged = [input.companyId, input.contactId, input.leadId, input.opportunityId].some(
+      (value) => value !== undefined,
+    );
+    const link = linkChanged
+      ? {
+          companyId: input.companyId ?? null,
+          contactId: input.contactId ?? null,
+          leadId: input.leadId ?? null,
+          opportunityId: input.opportunityId ?? null,
+        }
+      : {
+          companyId: current.companyId,
+          contactId: current.contactId,
+          leadId: current.leadId,
+          opportunityId: current.opportunityId,
+        };
+    this.oneParent(link);
+    await this.parentAccess(link, actor);
+    if (!current.activityId)
+      throw new ConflictException({
+        code: 'TASK_ACTIVITY_MISSING',
+        message: 'The task activity record is missing.',
+      });
+    const activityId = current.activityId;
+    return this.prisma.$transaction(async (database) => {
+      const updated = await database.task.update({
+        where: { id },
+        data: {
+          ...(input.subject !== undefined ? { subject: input.subject.trim() } : {}),
+          ...(input.description !== undefined
+            ? { description: input.description.trim() || null }
+            : {}),
+          ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(input.dueAt !== undefined ? { dueAt: new Date(input.dueAt) } : {}),
+          assigneeId,
+          ...link,
+        },
+        include: this.taskInclude(),
+      });
+      await database.activity.update({
+        where: { id: activityId },
+        data: { subject: updated.subject, body: updated.description, ...link },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'TASK_UPDATED',
+          entityType: 'Task',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { assigneeId: current.assigneeId, dueAt: current.dueAt.toISOString() },
+          after: { assigneeId: updated.assigneeId, dueAt: updated.dueAt.toISOString() },
+        },
+        database,
+      );
+      return updated;
+    });
+  }
+  async deleteTask(
+    id: string,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ): Promise<void> {
+    const current = await this.prisma.task.findFirst({ where: { id, deletedAt: null } });
+    if (!current) throw this.notFound('Task');
+    if (!canManageAllRecords(actor) && current.creatorId !== actor.id)
+      throw new ForbiddenException({
+        code: 'TASK_ACCESS_DENIED',
+        message: 'Only the creator or a manager can delete this task.',
+      });
+    if (!current.activityId)
+      throw new ConflictException({
+        code: 'TASK_ACTIVITY_MISSING',
+        message: 'The task activity record is missing.',
+      });
+    const activityId = current.activityId;
+    const deletedAt = new Date();
+    await this.prisma.$transaction(async (database) => {
+      await database.task.update({ where: { id }, data: { deletedAt } });
+      await database.activity.update({ where: { id: activityId }, data: { deletedAt } });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'TASK_DELETED',
+          entityType: 'Task',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { subject: current.subject, assigneeId: current.assigneeId },
+        },
+        database,
+      );
+    });
   }
   async complete(
     id: string,
@@ -279,10 +466,10 @@ export class ActivitiesService {
     };
   }
   private oneParent(input: {
-    companyId?: string;
-    contactId?: string;
-    leadId?: string;
-    opportunityId?: string;
+    companyId?: string | null;
+    contactId?: string | null;
+    leadId?: string | null;
+    opportunityId?: string | null;
   }) {
     if (
       [input.companyId, input.contactId, input.leadId, input.opportunityId].filter(Boolean)
@@ -294,7 +481,12 @@ export class ActivitiesService {
       });
   }
   private async parentAccess(
-    input: { companyId?: string; contactId?: string; leadId?: string; opportunityId?: string },
+    input: {
+      companyId?: string | null;
+      contactId?: string | null;
+      leadId?: string | null;
+      opportunityId?: string | null;
+    },
     actor: AuthenticatedActor,
   ) {
     const owner = canManageAllRecords(actor) ? {} : { ownerId: actor.id };

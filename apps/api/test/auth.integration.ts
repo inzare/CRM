@@ -233,6 +233,22 @@ describe('authentication and user authorization API', () => {
     expect(moved.body.stage.key).toBe('proposal');
     commercialOpportunityId = moved.body.id as string;
     commercialStageId = moved.body.stageId as string;
+    const detail = await request(app.getHttpServer())
+      .get(`/api/v1/opportunities/${commercialOpportunityId}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(detail.body.stageHistory.length).toBeGreaterThan(0);
+    const updated = await request(app.getHttpServer())
+      .patch(`/api/v1/opportunities/${commercialOpportunityId}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ probability: 55, notes: 'Technical discovery validated.' })
+      .expect(200);
+    expect(updated.body.probability).toBe(55);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/leads/${String(lead.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ interest: 'Attempted source rewrite' })
+      .expect(409);
     await request(app.getHttpServer())
       .post(`/api/v1/opportunities/${String(converted.body.id)}/transition`)
       .set('Authorization', `Bearer ${salesToken}`)
@@ -296,6 +312,16 @@ describe('authentication and user authorization API', () => {
     expect(first.body.version).toBe(1);
     expect(second.body.version).toBe(2);
     expect(first.body.total).toBe('2610');
+    const revised = await request(app.getHttpServer())
+      .patch(`/api/v1/quotes/${String(second.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        validUntil: quoteInput.validUntil,
+        notes: 'Revised draft',
+        lines: [{ ...quoteInput.lines[0], quantity: '3' }],
+      })
+      .expect(200);
+    expect(revised.body.total).toBe('3132');
     await request(app.getHttpServer())
       .post(`/api/v1/quotes/${String(first.body.id)}/status`)
       .set('Authorization', `Bearer ${salesToken}`)
@@ -344,6 +370,16 @@ describe('authentication and user authorization API', () => {
       })
       .expect(201);
     expect(contract.body.number).toBe('C-INT-001');
+    const updatedContract = await request(app.getHttpServer())
+      .patch(`/api/v1/contracts/${String(contract.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ renewalNotes: 'Review expansion licenses before renewal.', amount: '2750' })
+      .expect(200);
+    expect(updatedContract.body.amount).toBe('2750');
+    await request(app.getHttpServer())
+      .get(`/api/v1/contracts/${String(contract.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
   });
 
   it('links activities and idempotently completes and reopens assigned tasks', async () => {
@@ -368,6 +404,12 @@ describe('authentication and user authorization API', () => {
       })
       .expect(201);
     expect(note.body.type).toBe('NOTE');
+    const updatedNote = await request(app.getHttpServer())
+      .patch(`/api/v1/activities/${String(note.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ subject: 'Commercial handoff completed' })
+      .expect(200);
+    expect(updatedNote.body.subject).toBe('Commercial handoff completed');
     const task = await request(app.getHttpServer())
       .post('/api/v1/tasks')
       .set('Authorization', `Bearer ${salesToken}`)
@@ -380,6 +422,12 @@ describe('authentication and user authorization API', () => {
         priority: 'HIGH',
       })
       .expect(201);
+    const updatedTask = await request(app.getHttpServer())
+      .patch(`/api/v1/tasks/${String(task.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ subject: 'Confirm project kickoff', priority: 'MEDIUM' })
+      .expect(200);
+    expect(updatedTask.body.priority).toBe('MEDIUM');
     const completed = await request(app.getHttpServer())
       .post(`/api/v1/tasks/${String(task.body.id)}/complete`)
       .set('Authorization', `Bearer ${salesToken}`)
@@ -403,6 +451,14 @@ describe('authentication and user authorization API', () => {
     expect(widgets.body).toHaveProperty('today');
     expect(widgets.body).toHaveProperty('overdue');
     expect(widgets.body).toHaveProperty('noRecentActivity');
+    await request(app.getHttpServer())
+      .delete(`/api/v1/activities/${String(note.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(204);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/tasks/${String(task.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(204);
   });
 
   it('returns role-scoped dashboard metrics and formula-safe CSV reports', async () => {

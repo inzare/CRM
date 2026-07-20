@@ -25,6 +25,8 @@ import type {
   QualifyLeadDto,
   SalesListQueryDto,
   TransitionOpportunityDto,
+  UpdateLeadDto,
+  UpdateOpportunityDto,
   UpdateStageDto,
 } from './sales.dto';
 
@@ -34,6 +36,14 @@ const opportunityInclude = {
   owner: { select: { id: true, name: true } },
   stage: true,
   items: { include: { catalogItem: true } },
+  stageHistory: {
+    include: {
+      fromStage: true,
+      toStage: true,
+      actor: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  },
 } satisfies Prisma.OpportunityInclude;
 
 @Injectable()
@@ -62,7 +72,41 @@ export class SalesService {
           message: 'Move active opportunities before deactivating this stage.',
         });
     }
-    return this.prisma.pipelineStage.update({ where: { id }, data: input });
+    if (input.allowedToStageIds?.includes(id))
+      throw new ConflictException({
+        code: 'INVALID_PIPELINE_CONFIGURATION',
+        message: 'A stage cannot transition to itself.',
+      });
+    if (current.type !== StageType.OPEN && input.allowedToStageIds?.length)
+      throw new ConflictException({
+        code: 'INVALID_PIPELINE_CONFIGURATION',
+        message: 'Terminal stages cannot have outgoing transitions.',
+      });
+    const { allowedToStageIds, ...stageData } = input;
+    return this.prisma.$transaction(async (database) => {
+      if (allowedToStageIds) {
+        const targets = await database.pipelineStage.count({
+          where: { id: { in: allowedToStageIds }, isActive: true },
+        });
+        if (targets !== new Set(allowedToStageIds).size)
+          throw new ConflictException({
+            code: 'INVALID_PIPELINE_CONFIGURATION',
+            message: 'Every transition target must be an active stage.',
+          });
+        await database.pipelineTransition.deleteMany({ where: { fromStageId: id } });
+        await database.pipelineTransition.createMany({
+          data: [...new Set(allowedToStageIds)].map((toStageId) => ({
+            fromStageId: id,
+            toStageId,
+          })),
+        });
+      }
+      return database.pipelineStage.update({
+        where: { id },
+        data: stageData,
+        include: { transitionsFrom: { select: { toStageId: true } } },
+      });
+    });
   }
 
   async leads(query: SalesListQueryDto, actor: AuthenticatedActor) {
@@ -134,6 +178,90 @@ export class SalesService {
         database,
       );
       return created;
+    });
+  }
+
+  lead(id: string, actor: AuthenticatedActor) {
+    return this.requireLead(id, actor);
+  }
+
+  async updateLead(
+    id: string,
+    input: UpdateLeadDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.requireLead(id, actor);
+    if (current.status === LeadStatus.CONVERTED)
+      throw new ConflictException({
+        code: 'LEAD_STATE_CONFLICT',
+        message: 'Converted leads retain immutable source details.',
+      });
+    const ownerId = canManageAllRecords(actor) && input.ownerId ? input.ownerId : current.ownerId;
+    return this.prisma.$transaction(async (database) => {
+      const updated = await database.lead.update({
+        where: { id },
+        data: {
+          ...(input.companyId !== undefined ? { companyId: input.companyId } : {}),
+          ...(input.companyName !== undefined ? { companyName: input.companyName.trim() } : {}),
+          ...(input.contactFirstName !== undefined
+            ? { contactFirstName: input.contactFirstName.trim() }
+            : {}),
+          ...(input.contactLastName !== undefined
+            ? { contactLastName: input.contactLastName.trim() }
+            : {}),
+          ...(input.email !== undefined ? { email: input.email.trim().toLowerCase() || null } : {}),
+          ...(input.phone !== undefined ? { phone: input.phone.trim() || null } : {}),
+          ...(input.source !== undefined ? { source: input.source.trim() } : {}),
+          ...(input.interest !== undefined ? { interest: input.interest.trim() } : {}),
+          ...(input.budget !== undefined
+            ? { budget: input.budget ? new Prisma.Decimal(input.budget) : null }
+            : {}),
+          ...(input.currency !== undefined ? { currency: input.currency.toUpperCase() } : {}),
+          ...(input.expectedTimeline !== undefined
+            ? { expectedTimeline: input.expectedTimeline.trim() || null }
+            : {}),
+          ...(input.qualificationNotes !== undefined
+            ? { qualificationNotes: input.qualificationNotes.trim() || null }
+            : {}),
+          ownerId,
+        },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'LEAD_UPDATED',
+          entityType: 'Lead',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { ownerId: current.ownerId },
+          after: { ownerId: updated.ownerId },
+        },
+        database,
+      );
+      return updated;
+    });
+  }
+
+  async deleteLead(
+    id: string,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ): Promise<void> {
+    const current = await this.requireLead(id, actor);
+    await this.prisma.$transaction(async (database) => {
+      await database.lead.update({ where: { id }, data: { deletedAt: new Date() } });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'LEAD_DELETED',
+          entityType: 'Lead',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { status: current.status },
+        },
+        database,
+      );
     });
   }
 
@@ -357,6 +485,104 @@ export class SalesService {
         database,
       );
       return created;
+    });
+  }
+
+  async opportunity(id: string, actor: AuthenticatedActor) {
+    const opportunity = await this.prisma.opportunity.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+      include: opportunityInclude,
+    });
+    if (!opportunity) throw this.notFound('Opportunity');
+    return opportunity;
+  }
+
+  async updateOpportunity(
+    id: string,
+    input: UpdateOpportunityDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.prisma.opportunity.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+      include: { stage: true },
+    });
+    if (!current) throw this.notFound('Opportunity');
+    if (current.stage.type !== StageType.OPEN)
+      throw new ConflictException({
+        code: 'OPPORTUNITY_TERMINAL',
+        message: 'Reopen the opportunity before editing commercial details.',
+      });
+    const companyId = input.companyId ?? current.companyId;
+    if (
+      input.primaryContactId &&
+      !(await this.prisma.contact.findFirst({
+        where: { id: input.primaryContactId, companyId, deletedAt: null },
+      }))
+    )
+      throw new UnprocessableEntityException({
+        code: 'CONTACT_COMPANY_MISMATCH',
+        message: 'Primary contact must belong to the opportunity company.',
+      });
+    const ownerId = canManageAllRecords(actor) && input.ownerId ? input.ownerId : current.ownerId;
+    return this.prisma.$transaction(async (database) => {
+      const updated = await database.opportunity.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.companyId !== undefined ? { companyId: input.companyId } : {}),
+          ...(input.primaryContactId !== undefined
+            ? { primaryContactId: input.primaryContactId }
+            : {}),
+          ...(input.expectedValue !== undefined
+            ? { expectedValue: new Prisma.Decimal(input.expectedValue) }
+            : {}),
+          ...(input.currency !== undefined ? { currency: input.currency.toUpperCase() } : {}),
+          ...(input.probability !== undefined ? { probability: input.probability } : {}),
+          ...(input.closeDate !== undefined ? { closeDate: new Date(input.closeDate) } : {}),
+          ...(input.notes !== undefined ? { notes: input.notes.trim() || null } : {}),
+          ownerId,
+        },
+        include: opportunityInclude,
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'OPPORTUNITY_UPDATED',
+          entityType: 'Opportunity',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { ownerId: current.ownerId, expectedValue: current.expectedValue.toString() },
+          after: { ownerId: updated.ownerId, expectedValue: updated.expectedValue.toString() },
+        },
+        database,
+      );
+      return updated;
+    });
+  }
+
+  async deleteOpportunity(
+    id: string,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ): Promise<void> {
+    const current = await this.prisma.opportunity.findFirst({
+      where: { id, deletedAt: null, ...ownerScope(actor) },
+    });
+    if (!current) throw this.notFound('Opportunity');
+    await this.prisma.$transaction(async (database) => {
+      await database.opportunity.update({ where: { id }, data: { deletedAt: new Date() } });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'OPPORTUNITY_DELETED',
+          entityType: 'Opportunity',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { stageId: current.stageId },
+        },
+        database,
+      );
     });
   }
 

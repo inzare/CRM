@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 
@@ -18,6 +31,8 @@ import {
   OpportunityItemDto,
   RenewalQueryDto,
   TransitionQuoteDto,
+  UpdateContractDto,
+  UpdateQuoteDto,
 } from './commercial.dto';
 import { CommercialService } from './commercial.service';
 @ApiTags('commercial')
@@ -49,8 +64,17 @@ export class CommercialController {
     @Param('id') id: string,
     @Body() input: OpportunityItemDto,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
   ) {
-    return this.commercial.addOffering(id, input, actor);
+    return this.commercial.addOffering(id, input, actor, metadata(request));
+  }
+  @Delete('opportunities/:id/items/:catalogItemId') @HttpCode(HttpStatus.NO_CONTENT) removeOffering(
+    @Param('id') id: string,
+    @Param('catalogItemId') catalogItemId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.commercial.removeOffering(id, catalogItemId, actor, metadata(request));
   }
   @Get('quotes') quotes(
     @Query() query: CommercialListQueryDto,
@@ -64,6 +88,14 @@ export class CommercialController {
     @Req() request: Request,
   ) {
     return this.commercial.createQuote(input, actor, metadata(request));
+  }
+  @Patch('quotes/:id') updateQuote(
+    @Param('id') id: string,
+    @Body() input: UpdateQuoteDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.commercial.updateQuote(id, input, actor, metadata(request));
   }
   @Get('quotes/:id') quote(@Param('id') id: string, @CurrentUser() actor: AuthenticatedUser) {
     return this.commercial.quote(id, actor);
@@ -88,6 +120,27 @@ export class CommercialController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.commercial.contracts(query, actor);
+  }
+  @Get('contracts/:id') contract(@Param('id') id: string, @CurrentUser() actor: AuthenticatedUser) {
+    return this.commercial.contract(id, actor);
+  }
+  @Patch('contracts/:id') updateContract(
+    @Param('id') id: string,
+    @Body() input: UpdateContractDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.commercial.updateContract(id, input, actor, metadata(request));
+  }
+  @Delete('contracts/:id')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteContract(
+    @Param('id') id: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    return this.commercial.deleteContract(id, actor, metadata(request));
   }
   @Get('contracts/renewals/upcoming') renewals(
     @Query() query: RenewalQueryDto,

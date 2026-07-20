@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth/auth-context';
 import { ProtectedRoute } from './auth/protected-route';
 import { AppShell } from './components/app-shell';
+import { CatalogPage, ContractsPage, QuotePrintPage, QuotesPage } from './pages/commercial-pages';
 import { CompaniesPage } from './pages/companies-page';
 import { ForgotPasswordPage, SetPasswordPage } from './pages/credential-pages';
 import { HomePage } from './pages/home-page';
@@ -41,6 +42,10 @@ createRoot(document.getElementById('root')!).render(
               <Route path="companies" element={<CompaniesPage />} />
               <Route path="leads" element={<LeadsPage />} />
               <Route path="pipeline" element={<PipelinePage />} />
+              <Route path="catalog" element={<CatalogPage />} />
+              <Route path="quotes" element={<QuotesPage />} />
+              <Route path="quotes/:id/print" element={<QuotePrintPage />} />
+              <Route path="contracts" element={<ContractsPage />} />
               <Route
                 path="users"
                 element={

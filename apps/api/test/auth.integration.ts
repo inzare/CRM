@@ -9,6 +9,8 @@ import { NotificationService } from '../src/auth/notification.service';
 
 let resetToken = '';
 let invitationToken = '';
+let commercialOpportunityId = '';
+let commercialStageId = '';
 
 describe('authentication and user authorization API', () => {
   let app: Awaited<ReturnType<typeof createApplication>>;
@@ -229,6 +231,8 @@ describe('authentication and user authorization API', () => {
       })
       .expect(201);
     expect(moved.body.stage.key).toBe('proposal');
+    commercialOpportunityId = moved.body.id as string;
+    commercialStageId = moved.body.stageId as string;
     await request(app.getHttpServer())
       .post(`/api/v1/opportunities/${String(converted.body.id)}/transition`)
       .set('Authorization', `Bearer ${salesToken}`)
@@ -241,6 +245,105 @@ describe('authentication and user authorization API', () => {
     expect(
       board.body.find((stage: { key: string }) => stage.key === 'proposal').count,
     ).toBeGreaterThan(0);
+  });
+
+  it('snapshots versioned quote totals, accepts a quote, and creates a renewal contract', async () => {
+    const catalog = await request(app.getHttpServer())
+      .post('/api/v1/catalog')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        sku: 'INT-CONSULT',
+        name: 'Integration consulting',
+        category: 'Consulting',
+        type: 'CONSULTING',
+        pricingModel: 'ONE_TIME',
+        price: '1000',
+        currency: 'USD',
+        description: 'Integration-tested advisory package',
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${commercialOpportunityId}/items`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ catalogItemId: catalog.body.id, quantity: '2.5' })
+      .expect(201);
+    const quoteInput = {
+      opportunityId: commercialOpportunityId,
+      validUntil: '2027-02-28',
+      notes: 'Net 30',
+      lines: [
+        {
+          catalogItemId: catalog.body.id,
+          sku: catalog.body.sku,
+          description: catalog.body.name,
+          quantity: '2.5',
+          unitPrice: '1000',
+          discountRate: '10',
+          taxRate: '16',
+        },
+      ],
+    };
+    const first = await request(app.getHttpServer())
+      .post('/api/v1/quotes')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send(quoteInput)
+      .expect(201);
+    const second = await request(app.getHttpServer())
+      .post('/api/v1/quotes')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send(quoteInput)
+      .expect(201);
+    expect(first.body.version).toBe(1);
+    expect(second.body.version).toBe(2);
+    expect(first.body.total).toBe('2610');
+    await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(first.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'ACCEPTED' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(first.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'SENT' })
+      .expect(201);
+    const accepted = await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(first.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'ACCEPTED' })
+      .expect(201);
+    expect(accepted.body.status).toBe('ACCEPTED');
+    const stages = await request(app.getHttpServer())
+      .get('/api/v1/pipeline-stages')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    const negotiation = stages.body.find((stage: { key: string }) => stage.key === 'negotiation');
+    const won = stages.body.find((stage: { key: string }) => stage.key === 'won');
+    const negotiationMove = await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${commercialOpportunityId}/transition`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ expectedStageId: commercialStageId, toStageId: negotiation.id })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${commercialOpportunityId}/transition`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ expectedStageId: negotiationMove.body.stageId, toStageId: won.id })
+      .expect(201);
+    const contract = await request(app.getHttpServer())
+      .post('/api/v1/contracts')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        opportunityId: commercialOpportunityId,
+        quoteId: first.body.id,
+        number: 'C-INT-001',
+        startDate: '2027-03-01',
+        endDate: '2028-02-29',
+        renewalDate: '2028-01-31',
+        amount: first.body.total,
+        currency: 'USD',
+        status: 'ACTIVE',
+      })
+      .expect(201);
+    expect(contract.body.number).toBe('C-INT-001');
   });
 
   it('consumes password reset tokens once and revokes old credentials', async () => {

@@ -1,0 +1,422 @@
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+
+import { AuditService } from '../audit/audit.service';
+import type { RequestMetadata } from '../auth/auth.types';
+import {
+  canManageAllRecords,
+  ownerScope,
+  type AuthenticatedActor,
+} from '../common/authorization-scope';
+import { pageMeta } from '../common/pagination';
+import { PrismaService } from '../database/prisma.service';
+import { serializableTransaction } from '../database/transaction';
+import { Prisma, QuoteStatus, StageType } from '../generated/prisma/client';
+
+import type {
+  CatalogItemDto,
+  CommercialListQueryDto,
+  CreateContractDto,
+  CreateQuoteDto,
+  OpportunityItemDto,
+  RenewalQueryDto,
+} from './commercial.dto';
+import { calculateQuote } from './quote-calculator';
+
+const quoteInclude = {
+  lines: { orderBy: { sortOrder: 'asc' as const } },
+  opportunity: {
+    include: {
+      company: true,
+      primaryContact: true,
+      owner: { select: { id: true, name: true, email: true } },
+    },
+  },
+} satisfies Prisma.QuoteInclude;
+@Injectable()
+export class CommercialService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+  async catalog(query: CommercialListQueryDto) {
+    const search = query.search?.trim();
+    const where: Prisma.CatalogItemWhereInput = {
+      deletedAt: null,
+      ...(query.active === undefined ? {} : { isActive: query.active }),
+      ...(query.category ? { category: query.category } : {}),
+      ...(search
+        ? {
+            OR: [
+              { sku: { contains: search, mode: 'insensitive' } },
+              { name: { contains: search, mode: 'insensitive' } },
+              { description: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.catalogItem.findMany({
+        where,
+        orderBy: { name: query.direction },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.catalogItem.count({ where }),
+    ]);
+    return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  async createCatalog(input: CatalogItemDto, actor: AuthenticatedActor, metadata: RequestMetadata) {
+    return this.prisma.$transaction(async (db) => {
+      const created = await db.catalogItem.create({
+        data: {
+          sku: input.sku.trim().toUpperCase(),
+          name: input.name.trim(),
+          category: input.category.trim(),
+          type: input.type,
+          pricingModel: input.pricingModel,
+          price: new Prisma.Decimal(input.price),
+          currency: input.currency?.toUpperCase() ?? 'USD',
+          isActive: input.isActive ?? true,
+          description: input.description?.trim() ?? null,
+        },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'CATALOG_ITEM_CREATED',
+          entityType: 'CatalogItem',
+          entityId: created.id,
+          requestId: metadata.requestId,
+          after: { sku: created.sku, price: created.price.toString() },
+        },
+        db,
+      );
+      return created;
+    });
+  }
+  async updateCatalog(
+    id: string,
+    input: CatalogItemDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const current = await this.prisma.catalogItem.findFirst({ where: { id, deletedAt: null } });
+    if (!current) throw this.notFound('Catalog item');
+    return this.prisma.$transaction(async (db) => {
+      const updated = await db.catalogItem.update({
+        where: { id },
+        data: {
+          sku: input.sku.trim().toUpperCase(),
+          name: input.name.trim(),
+          category: input.category.trim(),
+          type: input.type,
+          pricingModel: input.pricingModel,
+          price: new Prisma.Decimal(input.price),
+          currency: input.currency?.toUpperCase() ?? current.currency,
+          isActive: input.isActive ?? current.isActive,
+          description: input.description?.trim() ?? null,
+        },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'CATALOG_ITEM_UPDATED',
+          entityType: 'CatalogItem',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { sku: current.sku, isActive: current.isActive },
+          after: { sku: updated.sku, isActive: updated.isActive },
+        },
+        db,
+      );
+      return updated;
+    });
+  }
+  async addOffering(opportunityId: string, input: OpportunityItemDto, actor: AuthenticatedActor) {
+    const opportunity = await this.prisma.opportunity.findFirst({
+      where: { id: opportunityId, deletedAt: null, ...ownerScope(actor) },
+      include: { stage: true },
+    });
+    if (!opportunity) throw this.notFound('Opportunity');
+    if (opportunity.stage.type !== StageType.OPEN)
+      throw new ConflictException({
+        code: 'TERMINAL_OPPORTUNITY',
+        message: 'Offerings cannot be changed on a closed opportunity.',
+      });
+    const item = await this.prisma.catalogItem.findFirst({
+      where: { id: input.catalogItemId, isActive: true, deletedAt: null },
+    });
+    if (!item) throw this.notFound('Catalog item');
+    const quantity = new Prisma.Decimal(input.quantity);
+    if (quantity.lte(0))
+      throw new UnprocessableEntityException({
+        code: 'INVALID_QUANTITY',
+        message: 'Quantity must be greater than zero.',
+      });
+    return this.prisma.opportunityItem.upsert({
+      where: { opportunityId_catalogItemId: { opportunityId, catalogItemId: item.id } },
+      update: {
+        quantity,
+        unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
+        billingNotes: input.billingNotes?.trim() ?? null,
+      },
+      create: {
+        opportunityId,
+        catalogItemId: item.id,
+        quantity,
+        unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : item.price,
+        currency: item.currency,
+        billingNotes: input.billingNotes?.trim() ?? null,
+      },
+      include: { catalogItem: true },
+    });
+  }
+  async createQuote(input: CreateQuoteDto, actor: AuthenticatedActor, metadata: RequestMetadata) {
+    const calculation = calculateQuote(input.lines);
+    return this.prisma.$transaction(async (db) => {
+      const opportunity = await db.opportunity.findFirst({
+        where: { id: input.opportunityId, deletedAt: null, ...ownerScope(actor) },
+      });
+      if (!opportunity) throw this.notFound('Opportunity');
+      const aggregate = await db.quote.aggregate({
+        where: { opportunityId: input.opportunityId },
+        _max: { version: true },
+      });
+      const version = (aggregate._max.version ?? 0) + 1;
+      const number = `Q-${new Date().getUTCFullYear()}-${opportunity.id.slice(0, 8).toUpperCase()}-V${version}`;
+      const quote = await db.quote.create({
+        data: {
+          opportunityId: input.opportunityId,
+          number,
+          version,
+          currency: opportunity.currency,
+          validUntil: new Date(input.validUntil),
+          notes: input.notes?.trim() ?? null,
+          subtotal: calculation.subtotal,
+          discountTotal: calculation.discountTotal,
+          taxTotal: calculation.taxTotal,
+          total: calculation.total,
+          lines: { create: calculation.lines },
+        },
+        include: quoteInclude,
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'QUOTE_CREATED',
+          entityType: 'Quote',
+          entityId: quote.id,
+          requestId: metadata.requestId,
+          after: { number, version, total: quote.total.toString(), status: quote.status },
+        },
+        db,
+      );
+      return quote;
+    }, serializableTransaction);
+  }
+  async quotes(query: CommercialListQueryDto, actor: AuthenticatedActor) {
+    const where: Prisma.QuoteWhereInput = {
+      opportunity: { deletedAt: null, ...ownerScope(actor) },
+      ...(query.opportunityId ? { opportunityId: query.opportunityId } : {}),
+    };
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.quote.findMany({
+        where,
+        include: quoteInclude,
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.quote.count({ where }),
+    ]);
+    return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  async quote(id: string, actor: AuthenticatedActor) {
+    const quote = await this.prisma.quote.findFirst({
+      where: { id, opportunity: { deletedAt: null, ...ownerScope(actor) } },
+      include: quoteInclude,
+    });
+    if (!quote) throw this.notFound('Quote');
+    return quote;
+  }
+  async transitionQuote(
+    id: string,
+    status: QuoteStatus,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    return this.prisma.$transaction(async (db) => {
+      const current = await db.quote.findFirst({
+        where: { id, opportunity: { deletedAt: null, ...ownerScope(actor) } },
+      });
+      if (!current) throw this.notFound('Quote');
+      const now = new Date();
+      const effective =
+        current.status === QuoteStatus.SENT && current.validUntil < now
+          ? QuoteStatus.EXPIRED
+          : current.status;
+      const allowed: Record<QuoteStatus, QuoteStatus[]> = {
+        DRAFT: [QuoteStatus.SENT],
+        SENT: [QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.EXPIRED],
+        ACCEPTED: [],
+        REJECTED: [],
+        EXPIRED: [],
+      };
+      if (!allowed[effective].includes(status))
+        throw new ConflictException({
+          code: 'INVALID_QUOTE_TRANSITION',
+          message: `Quote cannot move from ${effective} to ${status}.`,
+        });
+      if (status === QuoteStatus.ACCEPTED)
+        await db.quote.updateMany({
+          where: {
+            opportunityId: current.opportunityId,
+            status: QuoteStatus.ACCEPTED,
+            id: { not: id },
+          },
+          data: { status: QuoteStatus.REJECTED, rejectedAt: now },
+        });
+      const updated = await db.quote.update({
+        where: { id },
+        data: {
+          status,
+          sentAt: status === QuoteStatus.SENT ? now : current.sentAt,
+          acceptedAt: status === QuoteStatus.ACCEPTED ? now : null,
+          rejectedAt: status === QuoteStatus.REJECTED ? now : null,
+          expiredAt: status === QuoteStatus.EXPIRED ? now : null,
+        },
+        include: quoteInclude,
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'QUOTE_STATUS_CHANGED',
+          entityType: 'Quote',
+          entityId: id,
+          requestId: metadata.requestId,
+          before: { status: current.status },
+          after: { status },
+        },
+        db,
+      );
+      return updated;
+    }, serializableTransaction);
+  }
+  async createContract(
+    input: CreateContractDto,
+    actor: AuthenticatedActor,
+    metadata: RequestMetadata,
+  ) {
+    const ownerId = canManageAllRecords(actor) && input.ownerId ? input.ownerId : actor.id;
+    const quote = await this.prisma.quote.findFirst({
+      where: {
+        id: input.quoteId,
+        opportunityId: input.opportunityId,
+        status: QuoteStatus.ACCEPTED,
+        opportunity: { deletedAt: null, ...ownerScope(actor) },
+      },
+      include: { opportunity: { include: { stage: true } } },
+    });
+    if (!quote || quote.opportunity.stage.type !== StageType.WON)
+      throw new ConflictException({
+        code: 'CONTRACT_PREREQUISITES',
+        message: 'Contracts require a won opportunity and accepted quote.',
+      });
+    const start = new Date(input.startDate);
+    const end = input.endDate ? new Date(input.endDate) : null;
+    const renewal = input.renewalDate ? new Date(input.renewalDate) : null;
+    if ((end && end < start) || (renewal && renewal < start))
+      throw new UnprocessableEntityException({
+        code: 'INVALID_CONTRACT_DATES',
+        message: 'End and renewal dates must not precede the start date.',
+      });
+    return this.prisma.$transaction(async (db) => {
+      const contract = await db.contract.create({
+        data: {
+          opportunityId: input.opportunityId,
+          quoteId: input.quoteId,
+          ownerId,
+          number: input.number.trim(),
+          startDate: start,
+          endDate: end,
+          renewalDate: renewal,
+          amount: new Prisma.Decimal(input.amount),
+          currency: input.currency?.toUpperCase() ?? quote.currency,
+          status: input.status ?? 'DRAFT',
+          renewalNotes: input.renewalNotes?.trim() ?? null,
+        },
+        include: {
+          opportunity: { include: { company: true, items: { include: { catalogItem: true } } } },
+          quote: true,
+          owner: { select: { id: true, name: true } },
+        },
+      });
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: 'CONTRACT_CREATED',
+          entityType: 'Contract',
+          entityId: contract.id,
+          requestId: metadata.requestId,
+          after: { number: contract.number, amount: contract.amount.toString() },
+        },
+        db,
+      );
+      return contract;
+    });
+  }
+  async renewals(query: RenewalQueryDto, actor: AuthenticatedActor) {
+    const through = new Date(Date.now() + query.days * 86400000);
+    const where: Prisma.ContractWhereInput = {
+      deletedAt: null,
+      ...ownerScope(actor),
+      renewalDate: { gte: new Date(), lte: through },
+    };
+    const data = await this.prisma.contract.findMany({
+      where,
+      include: {
+        opportunity: { include: { company: true, items: { include: { catalogItem: true } } } },
+        owner: { select: { id: true, name: true } },
+      },
+      orderBy: { renewalDate: 'asc' },
+      take: query.pageSize,
+    });
+    return {
+      data: data.map((contract) => ({
+        ...contract,
+        suggestions: contract.opportunity.items.map((item) => ({
+          sku: item.catalogItem.sku,
+          name: item.catalogItem.name,
+          type: item.catalogItem.type,
+        })),
+      })),
+      meta: pageMeta(1, query.pageSize, data.length),
+    };
+  }
+  async contracts(query: CommercialListQueryDto, actor: AuthenticatedActor) {
+    const where: Prisma.ContractWhereInput = { deletedAt: null, ...ownerScope(actor) };
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.contract.findMany({
+        where,
+        include: {
+          opportunity: { include: { company: true } },
+          quote: true,
+          owner: { select: { id: true, name: true } },
+        },
+        orderBy: { renewalDate: 'asc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.contract.count({ where }),
+    ]);
+    return { data, meta: pageMeta(query.page, query.pageSize, total) };
+  }
+  private notFound(entity: string) {
+    return new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: `${entity} not found.` });
+  }
+}

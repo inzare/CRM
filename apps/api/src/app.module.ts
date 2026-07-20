@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AuditApiModule } from './audit/audit-api.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { CommercialModule } from './commercial/commercial.module';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { ApplicationThrottlerGuard } from './common/application-throttler.guard';
 import { requestIdMiddleware } from './common/request-id.middleware';
@@ -27,6 +28,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     CustomersModule,
     SalesModule,
+    CommercialModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -26,6 +26,7 @@ const navigation = [
   { to: '/pipeline', label: 'Pipeline', icon: BarChart3, roles: ['ADMIN', 'MANAGER', 'SALES'] },
   { to: '/catalog', label: 'Catalog', icon: Package, roles: ['ADMIN', 'MANAGER', 'SALES'] },
   { to: '/quotes', label: 'Quotes', icon: FileText, roles: ['ADMIN', 'MANAGER', 'SALES'] },
+  { to: '/contracts', label: 'Contracts', icon: FileText, roles: ['ADMIN', 'MANAGER', 'SALES'] },
   { to: '/tasks', label: 'Tasks', icon: ClipboardCheck },
   { to: '/users', label: 'Users', icon: Users, roles: ['ADMIN'] },
 ] as const;
@@ -52,7 +53,7 @@ export function AppShell(): React.JSX.Element {
       >
         Skip to content
       </a>
-      <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 lg:hidden">
+      <header className="no-print flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 lg:hidden">
         <Logo />
         <button
           aria-label="Toggle navigation"
@@ -63,7 +64,7 @@ export function AppShell(): React.JSX.Element {
         </button>
       </header>
       <aside
-        className={`${open ? 'fixed inset-0 top-16 z-40 flex' : 'hidden'} flex-col border-r border-slate-800 bg-ink-950 text-white lg:sticky lg:top-0 lg:flex lg:h-screen`}
+        className={`no-print ${open ? 'fixed inset-0 top-16 z-40 flex' : 'hidden'} flex-col border-r border-slate-800 bg-ink-950 text-white lg:sticky lg:top-0 lg:flex lg:h-screen`}
       >
         <div className="hidden h-20 items-center border-b border-white/10 px-6 lg:flex">
           <Logo />

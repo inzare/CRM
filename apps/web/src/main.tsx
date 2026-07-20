@@ -13,6 +13,7 @@ import { HomePage } from './pages/home-page';
 import { LoginPage } from './pages/login-page';
 import { ProfilePage } from './pages/profile-page';
 import { LeadsPage, PipelinePage } from './pages/sales-pages';
+import { TasksPage } from './pages/tasks-page';
 import { UsersPage } from './pages/users-page';
 import './index.css';
 
@@ -46,6 +47,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="quotes" element={<QuotesPage />} />
               <Route path="quotes/:id/print" element={<QuotePrintPage />} />
               <Route path="contracts" element={<ContractsPage />} />
+              <Route path="tasks" element={<TasksPage />} />
               <Route
                 path="users"
                 element={

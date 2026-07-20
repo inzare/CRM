@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import { ActivitiesModule } from './activities/activities.module';
 import { AuditApiModule } from './audit/audit-api.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -29,6 +30,7 @@ import { UsersModule } from './users/users.module';
     CustomersModule,
     SalesModule,
     CommercialModule,
+    ActivitiesModule,
   ],
   controllers: [HealthController],
   providers: [

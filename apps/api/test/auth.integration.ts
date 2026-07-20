@@ -346,6 +346,65 @@ describe('authentication and user authorization API', () => {
     expect(contract.body.number).toBe('C-INT-001');
   });
 
+  it('links activities and idempotently completes and reopens assigned tasks', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/activities')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ type: 'NOTE', subject: 'Unlinked note' })
+      .expect(400);
+    const assignees = await request(app.getHttpServer())
+      .get('/api/v1/assignees')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    const sales = assignees.body.find((item: { role: string }) => item.role === 'SALES');
+    const note = await request(app.getHttpServer())
+      .post('/api/v1/activities')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        type: 'NOTE',
+        subject: 'Commercial handoff',
+        body: 'Accepted proposal handed to delivery.',
+        opportunityId: commercialOpportunityId,
+      })
+      .expect(201);
+    expect(note.body.type).toBe('NOTE');
+    const task = await request(app.getHttpServer())
+      .post('/api/v1/tasks')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        subject: 'Schedule project kickoff',
+        description: 'Coordinate customer and delivery calendars.',
+        dueAt: '2027-03-02T16:00:00.000Z',
+        assigneeId: sales.id,
+        opportunityId: commercialOpportunityId,
+        priority: 'HIGH',
+      })
+      .expect(201);
+    const completed = await request(app.getHttpServer())
+      .post(`/api/v1/tasks/${String(task.body.id)}/complete`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(201);
+    expect(completed.body.status).toBe('COMPLETED');
+    const repeated = await request(app.getHttpServer())
+      .post(`/api/v1/tasks/${String(task.body.id)}/complete`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(201);
+    expect(repeated.body.completedAt).toBe(completed.body.completedAt);
+    const reopened = await request(app.getHttpServer())
+      .post(`/api/v1/tasks/${String(task.body.id)}/reopen`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(201);
+    expect(reopened.body.status).toBe('OPEN');
+    expect(reopened.body.completedAt).toBeNull();
+    const widgets = await request(app.getHttpServer())
+      .get('/api/v1/follow-up/widgets')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(widgets.body).toHaveProperty('today');
+    expect(widgets.body).toHaveProperty('overdue');
+    expect(widgets.body).toHaveProperty('noRecentActivity');
+  });
+
   it('consumes password reset tokens once and revokes old credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')

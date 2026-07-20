@@ -163,6 +163,86 @@ describe('authentication and user authorization API', () => {
       .expect(404);
   });
 
+  it('qualifies and idempotently converts a lead, then enforces pipeline transitions', async () => {
+    const lead = await request(app.getHttpServer())
+      .post('/api/v1/leads')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        companyName: 'Pipeline Integration Co',
+        contactFirstName: 'Grace',
+        contactLastName: 'Hopper',
+        email: 'grace@pipeline.example.com',
+        source: 'Referral',
+        interest: 'Platform modernization',
+        budget: '125000',
+        currency: 'USD',
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/leads/${String(lead.body.id)}/convert`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        opportunityName: 'Modernization program',
+        expectedValue: '125000',
+        closeDate: '2027-03-31',
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/api/v1/leads/${String(lead.body.id)}/qualify`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ qualificationNotes: 'Sponsor, budget, and delivery window confirmed.' })
+      .expect(201);
+    const converted = await request(app.getHttpServer())
+      .post(`/api/v1/leads/${String(lead.body.id)}/convert`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        opportunityName: 'Modernization program',
+        expectedValue: '125000',
+        closeDate: '2027-03-31',
+      })
+      .expect(201);
+    const repeated = await request(app.getHttpServer())
+      .post(`/api/v1/leads/${String(lead.body.id)}/convert`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ opportunityName: 'Ignored duplicate', expectedValue: '1', closeDate: '2027-04-01' })
+      .expect(201);
+    expect(repeated.body.id).toBe(converted.body.id);
+
+    const stages = await request(app.getHttpServer())
+      .get('/api/v1/pipeline-stages')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    const won = stages.body.find((stage: { key: string }) => stage.key === 'won');
+    const proposal = stages.body.find((stage: { key: string }) => stage.key === 'proposal');
+    await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${String(converted.body.id)}/transition`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ expectedStageId: converted.body.stageId, toStageId: won.id })
+      .expect(422);
+    const moved = await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${String(converted.body.id)}/transition`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        expectedStageId: converted.body.stageId,
+        toStageId: proposal.id,
+        reason: 'Discovery completed',
+      })
+      .expect(201);
+    expect(moved.body.stage.key).toBe('proposal');
+    await request(app.getHttpServer())
+      .post(`/api/v1/opportunities/${String(converted.body.id)}/transition`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ expectedStageId: converted.body.stageId, toStageId: proposal.id })
+      .expect(409);
+    const board = await request(app.getHttpServer())
+      .get('/api/v1/pipeline')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(
+      board.body.find((stage: { key: string }) => stage.key === 'proposal').count,
+    ).toBeGreaterThan(0);
+  });
+
   it('consumes password reset tokens once and revokes old credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')

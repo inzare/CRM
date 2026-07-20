@@ -11,6 +11,7 @@ import { ForgotPasswordPage, SetPasswordPage } from './pages/credential-pages';
 import { HomePage } from './pages/home-page';
 import { LoginPage } from './pages/login-page';
 import { ProfilePage } from './pages/profile-page';
+import { LeadsPage, PipelinePage } from './pages/sales-pages';
 import { UsersPage } from './pages/users-page';
 import './index.css';
 
@@ -38,6 +39,8 @@ createRoot(document.getElementById('root')!).render(
               <Route index element={<HomePage />} />
               <Route path="profile" element={<ProfilePage />} />
               <Route path="companies" element={<CompaniesPage />} />
+              <Route path="leads" element={<LeadsPage />} />
+              <Route path="pipeline" element={<PipelinePage />} />
               <Route
                 path="users"
                 element={

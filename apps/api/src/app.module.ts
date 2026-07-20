@@ -13,6 +13,7 @@ import { validateEnvironment } from './config/environment';
 import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
+import { SalesModule } from './sales/sales.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -25,6 +26,7 @@ import { UsersModule } from './users/users.module';
     AuditApiModule,
     UsersModule,
     CustomersModule,
+    SalesModule,
   ],
   controllers: [HealthController],
   providers: [

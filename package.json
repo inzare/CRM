@@ -24,7 +24,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "openspec:validate": "openspec validate --all --strict --no-interactive",
+    "openspec:validate": "npx --yes @fission-ai/openspec validate --all --strict --no-interactive",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"

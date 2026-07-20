@@ -88,6 +88,81 @@ describe('authentication and user authorization API', () => {
       .expect(403);
   });
 
+  it('creates, searches, updates, scopes, and soft-deletes customer records', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/companies')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        name: 'Integration Customer',
+        industry: 'Technology',
+        website: 'https://integration.example.com',
+        tags: ['Priority', 'Mexico'],
+      })
+      .expect(201);
+    expect(created.body.company.duplicateSuggestions).toBeUndefined();
+    expect(created.body.duplicateSuggestions).toEqual([]);
+    const company = created.body.company;
+
+    const duplicate = await request(app.getHttpServer())
+      .post('/api/v1/companies')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ name: 'Integration Customer' })
+      .expect(201);
+    expect(duplicate.body.duplicateSuggestions).toContainEqual({
+      id: company.id,
+      name: company.name,
+    });
+
+    const list = await request(app.getHttpServer())
+      .get('/api/v1/companies?search=Integration&tag=Priority')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(list.body.data.some((item: { id: string }) => item.id === company.id)).toBe(true);
+
+    const contact = await request(app.getHttpServer())
+      .post('/api/v1/contacts')
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({
+        companyId: company.id,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@integration.example.com',
+        isDecisionMaker: true,
+      })
+      .expect(201);
+    expect(contact.body.company.name).toBe('Integration Customer');
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/companies/${String(company.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ name: 'Integration Customer Updated', expectedUpdatedAt: company.updatedAt })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/companies/${String(company.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ name: 'Stale Update', expectedUpdatedAt: company.updatedAt })
+      .expect(409);
+
+    const timeline = await request(app.getHttpServer())
+      .get(`/api/v1/companies/${String(company.id)}/timeline`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(200);
+    expect(timeline.body.data).toEqual([]);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/contacts/${String(contact.body.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(204);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/companies/${String(company.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(204);
+    await request(app.getHttpServer())
+      .get(`/api/v1/companies/${String(company.id)}`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .expect(404);
+  });
+
   it('consumes password reset tokens once and revokes old credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')

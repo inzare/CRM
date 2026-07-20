@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth/auth-context';
 import { ProtectedRoute } from './auth/protected-route';
 import { AppShell } from './components/app-shell';
+import { CompaniesPage } from './pages/companies-page';
 import { ForgotPasswordPage, SetPasswordPage } from './pages/credential-pages';
 import { HomePage } from './pages/home-page';
 import { LoginPage } from './pages/login-page';
@@ -36,6 +37,7 @@ createRoot(document.getElementById('root')!).render(
             >
               <Route index element={<HomePage />} />
               <Route path="profile" element={<ProfilePage />} />
+              <Route path="companies" element={<CompaniesPage />} />
               <Route
                 path="users"
                 element={

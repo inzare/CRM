@@ -10,6 +10,7 @@ import { ApiExceptionFilter } from './common/api-exception.filter';
 import { ApplicationThrottlerGuard } from './common/application-throttler.guard';
 import { requestIdMiddleware } from './common/request-id.middleware';
 import { validateEnvironment } from './config/environment';
+import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { UsersModule } from './users/users.module';
@@ -23,6 +24,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     AuditApiModule,
     UsersModule,
+    CustomersModule,
   ],
   controllers: [HealthController],
   providers: [

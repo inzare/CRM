@@ -18,7 +18,10 @@ import type { Request } from 'express';
 import { AccessTokenGuard } from '../auth/access-token.guard';
 import type { AuthenticatedUser, RequestMetadata } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { requestIdOf } from '../common/request-id.middleware';
+import { Role } from '../generated/prisma/client';
 
 import {
   CreateCompanyDto,
@@ -32,7 +35,7 @@ import { CustomersService } from './customers.service';
 
 @ApiTags('customers')
 @ApiBearerAuth()
-@UseGuards(AccessTokenGuard)
+@UseGuards(AccessTokenGuard, RolesGuard)
 @Controller()
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
@@ -45,14 +48,14 @@ export class CustomersController {
   @Get('companies/:id') company(@Param('id') id: string, @CurrentUser() actor: AuthenticatedUser) {
     return this.customers.company(id, actor);
   }
-  @Post('companies') createCompany(
+  @Post('companies') @Roles(Role.ADMIN, Role.MANAGER, Role.SALES) createCompany(
     @Body() input: CreateCompanyDto,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
   ) {
     return this.customers.createCompany(input, actor, metadata(request));
   }
-  @Patch('companies/:id') updateCompany(
+  @Patch('companies/:id') @Roles(Role.ADMIN, Role.MANAGER, Role.SALES) updateCompany(
     @Param('id') id: string,
     @Body() input: UpdateCompanyDto,
     @CurrentUser() actor: AuthenticatedUser,
@@ -60,7 +63,10 @@ export class CustomersController {
   ) {
     return this.customers.updateCompany(id, input, actor, metadata(request));
   }
-  @Delete('companies/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteCompany(
+  @Delete('companies/:id')
+  @Roles(Role.ADMIN, Role.MANAGER, Role.SALES)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteCompany(
     @Param('id') id: string,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
@@ -87,14 +93,14 @@ export class CustomersController {
   ) {
     return this.customers.listContacts(query, actor, companyId);
   }
-  @Post('contacts') createContact(
+  @Post('contacts') @Roles(Role.ADMIN, Role.MANAGER, Role.SALES) createContact(
     @Body() input: CreateContactDto,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
   ) {
     return this.customers.createContact(input, actor, metadata(request));
   }
-  @Patch('contacts/:id') updateContact(
+  @Patch('contacts/:id') @Roles(Role.ADMIN, Role.MANAGER, Role.SALES) updateContact(
     @Param('id') id: string,
     @Body() input: UpdateContactDto,
     @CurrentUser() actor: AuthenticatedUser,
@@ -102,7 +108,10 @@ export class CustomersController {
   ) {
     return this.customers.updateContact(id, input, actor, metadata(request));
   }
-  @Delete('contacts/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteContact(
+  @Delete('contacts/:id')
+  @Roles(Role.ADMIN, Role.MANAGER, Role.SALES)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteContact(
     @Param('id') id: string,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,

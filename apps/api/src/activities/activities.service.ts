@@ -13,7 +13,7 @@ import { canManageAllRecords, type AuthenticatedActor } from '../common/authoriz
 import { pageMeta } from '../common/pagination';
 import type { Environment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
-import { ActivityType, Prisma, TaskStatus } from '../generated/prisma/client';
+import { ActivityType, Prisma, Role, TaskStatus } from '../generated/prisma/client';
 
 import {
   TaskListQueryDto,
@@ -184,6 +184,11 @@ export class ActivitiesService {
   async createTask(input: TaskDto, actor: AuthenticatedActor, metadata: RequestMetadata) {
     this.oneParent(input);
     await this.parentAccess(input, actor);
+    if (actor.role === Role.CONSULTANT && input.assigneeId !== actor.id)
+      throw new ForbiddenException({
+        code: 'TASK_ASSIGNMENT_DENIED',
+        message: 'Consultants may only create tasks assigned to themselves.',
+      });
     const assignee = await this.prisma.user.findFirst({
       where: { id: input.assigneeId, isActive: true, deletedAt: null },
     });
@@ -291,6 +296,11 @@ export class ActivitiesService {
         message: 'You cannot update this task.',
       });
     const assigneeId = input.assigneeId ?? current.assigneeId;
+    if (actor.role === Role.CONSULTANT && assigneeId !== actor.id)
+      throw new ForbiddenException({
+        code: 'TASK_ASSIGNMENT_DENIED',
+        message: 'Consultants may not reassign tasks.',
+      });
     if (
       !(await this.prisma.user.findFirst({
         where: { id: assigneeId, isActive: true, deletedAt: null },
@@ -489,21 +499,60 @@ export class ActivitiesService {
     },
     actor: AuthenticatedActor,
   ) {
-    const owner = canManageAllRecords(actor) ? {} : { ownerId: actor.id };
+    const owner = canManageAllRecords(actor)
+      ? {}
+      : actor.role === Role.SALES
+        ? { ownerId: actor.id }
+        : undefined;
+    const assignedTask = { some: { assigneeId: actor.id, deletedAt: null } };
     const exists = input.companyId
       ? await this.prisma.company.findFirst({
-          where: { id: input.companyId, deletedAt: null, ...owner },
+          where: {
+            id: input.companyId,
+            deletedAt: null,
+            ...(owner ?? {
+              OR: [
+                { tasks: assignedTask },
+                { contacts: { some: { deletedAt: null, tasks: assignedTask } } },
+                { opportunities: { some: { deletedAt: null, tasks: assignedTask } } },
+              ],
+            }),
+          },
         })
       : input.contactId
         ? await this.prisma.contact.findFirst({
-            where: { id: input.contactId, deletedAt: null, ...owner },
+            where: {
+              id: input.contactId,
+              deletedAt: null,
+              ...(owner ?? {
+                OR: [
+                  { tasks: assignedTask },
+                  {
+                    company: {
+                      OR: [
+                        { tasks: assignedTask },
+                        { opportunities: { some: { deletedAt: null, tasks: assignedTask } } },
+                      ],
+                    },
+                  },
+                ],
+              }),
+            },
           })
         : input.leadId
           ? await this.prisma.lead.findFirst({
-              where: { id: input.leadId, deletedAt: null, ...owner },
+              where: {
+                id: input.leadId,
+                deletedAt: null,
+                ...(owner ?? { tasks: assignedTask }),
+              },
             })
           : await this.prisma.opportunity.findFirst({
-              where: { id: input.opportunityId!, deletedAt: null, ...owner },
+              where: {
+                id: input.opportunityId!,
+                deletedAt: null,
+                ...(owner ?? { tasks: assignedTask }),
+              },
             });
     if (!exists) throw this.notFound('Linked record');
   }

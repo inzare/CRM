@@ -18,7 +18,10 @@ import type { Request } from 'express';
 import { AccessTokenGuard } from '../auth/access-token.guard';
 import type { AuthenticatedUser, RequestMetadata } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { requestIdOf } from '../common/request-id.middleware';
+import { Role } from '../generated/prisma/client';
 
 import {
   ActivityDto,
@@ -30,7 +33,7 @@ import {
 import { ActivitiesService } from './activities.service';
 @ApiTags('activities')
 @ApiBearerAuth()
-@UseGuards(AccessTokenGuard)
+@UseGuards(AccessTokenGuard, RolesGuard)
 @Controller()
 export class ActivitiesController {
   constructor(private readonly activities: ActivitiesService) {}
@@ -55,7 +58,10 @@ export class ActivitiesController {
   ) {
     return this.activities.updateActivity(id, input, actor, metadata(request));
   }
-  @Delete('activities/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteActivity(
+  @Delete('activities/:id')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteActivity(
     @Param('id') id: string,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
@@ -80,7 +86,7 @@ export class ActivitiesController {
   ) {
     return this.activities.updateTask(id, input, actor, metadata(request));
   }
-  @Delete('tasks/:id') @HttpCode(HttpStatus.NO_CONTENT) deleteTask(
+  @Delete('tasks/:id') @Roles(Role.ADMIN, Role.MANAGER) @HttpCode(HttpStatus.NO_CONTENT) deleteTask(
     @Param('id') id: string,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,

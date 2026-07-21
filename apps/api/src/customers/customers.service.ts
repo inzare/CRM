@@ -2,14 +2,10 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 
 import { AuditService } from '../audit/audit.service';
 import type { RequestMetadata } from '../auth/auth.types';
-import {
-  canManageAllRecords,
-  ownerScope,
-  type AuthenticatedActor,
-} from '../common/authorization-scope';
+import { canManageAllRecords, type AuthenticatedActor } from '../common/authorization-scope';
 import { pageMeta } from '../common/pagination';
 import { PrismaService } from '../database/prisma.service';
-import { Prisma } from '../generated/prisma/client';
+import { Prisma, Role } from '../generated/prisma/client';
 
 import type {
   CreateCompanyDto,
@@ -42,7 +38,7 @@ export class CustomersService {
     const search = query.search?.trim();
     const where: Prisma.CompanyWhereInput = {
       deletedAt: null,
-      ...ownerScope(actor),
+      ...this.companyScope(actor),
       ...(query.ownerId && canManageAllRecords(actor) ? { ownerId: query.ownerId } : {}),
       ...(query.industry ? { industry: { equals: query.industry, mode: 'insensitive' } } : {}),
       ...(query.tag
@@ -73,7 +69,7 @@ export class CustomersService {
 
   async company(id: string, actor: AuthenticatedActor) {
     const company = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null, ...ownerScope(actor) },
+      where: { id, deletedAt: null, ...this.companyScope(actor) },
       include: {
         ...companyInclude,
         contacts: { where: { deletedAt: null }, include: contactInclude },
@@ -145,7 +141,7 @@ export class CustomersService {
     metadata: RequestMetadata,
   ) {
     const current = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null, ...ownerScope(actor) },
+      where: { id, deletedAt: null, ...this.companyScope(actor) },
     });
     if (!current) throw this.notFound('Company');
     if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime())
@@ -202,7 +198,7 @@ export class CustomersService {
     metadata: RequestMetadata,
   ): Promise<void> {
     const current = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null, ...ownerScope(actor) },
+      where: { id, deletedAt: null, ...this.companyScope(actor) },
     });
     if (!current) throw this.notFound('Company');
     await this.prisma.$transaction(async (database) => {
@@ -225,7 +221,7 @@ export class CustomersService {
     const search = query.search?.trim();
     const where: Prisma.ContactWhereInput = {
       deletedAt: null,
-      ...ownerScope(actor),
+      ...this.contactScope(actor),
       ...(companyId ? { companyId } : {}),
       ...(query.ownerId && canManageAllRecords(actor) ? { ownerId: query.ownerId } : {}),
       ...(search
@@ -286,7 +282,7 @@ export class CustomersService {
     metadata: RequestMetadata,
   ) {
     const current = await this.prisma.contact.findFirst({
-      where: { id, deletedAt: null, ...ownerScope(actor) },
+      where: { id, deletedAt: null, ...this.contactScope(actor) },
     });
     if (!current) throw this.notFound('Contact');
     if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime())
@@ -321,7 +317,7 @@ export class CustomersService {
     metadata: RequestMetadata,
   ): Promise<void> {
     const current = await this.prisma.contact.findFirst({
-      where: { id, deletedAt: null, ...ownerScope(actor) },
+      where: { id, deletedAt: null, ...this.contactScope(actor) },
     });
     if (!current) throw this.notFound('Contact');
     await this.prisma.$transaction(async (database) => {
@@ -349,7 +345,7 @@ export class CustomersService {
     if (kind === 'company') await this.requireCompany(id, actor);
     else if (
       !(await this.prisma.contact.findFirst({
-        where: { id, deletedAt: null, ...ownerScope(actor) },
+        where: { id, deletedAt: null, ...this.contactScope(actor) },
       }))
     )
       throw this.notFound('Contact');
@@ -391,7 +387,7 @@ export class CustomersService {
   private async requireCompany(id: string, actor: AuthenticatedActor): Promise<void> {
     if (
       !(await this.prisma.company.findFirst({
-        where: { id, deletedAt: null, ...ownerScope(actor) },
+        where: { id, deletedAt: null, ...this.companyScope(actor) },
         select: { id: true },
       }))
     )
@@ -399,6 +395,36 @@ export class CustomersService {
   }
   private notFound(entity: string) {
     return new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: `${entity} not found.` });
+  }
+  private companyScope(actor: AuthenticatedActor): Prisma.CompanyWhereInput {
+    if (canManageAllRecords(actor)) return {};
+    if (actor.role === Role.SALES) return { ownerId: actor.id };
+    const assignedTask = { some: { assigneeId: actor.id, deletedAt: null } };
+    return {
+      OR: [
+        { tasks: assignedTask },
+        { contacts: { some: { deletedAt: null, tasks: assignedTask } } },
+        { opportunities: { some: { deletedAt: null, tasks: assignedTask } } },
+      ],
+    };
+  }
+  private contactScope(actor: AuthenticatedActor): Prisma.ContactWhereInput {
+    if (canManageAllRecords(actor)) return {};
+    if (actor.role === Role.SALES) return { ownerId: actor.id };
+    const assignedTask = { some: { assigneeId: actor.id, deletedAt: null } };
+    return {
+      OR: [
+        { tasks: assignedTask },
+        {
+          company: {
+            OR: [
+              { tasks: assignedTask },
+              { opportunities: { some: { deletedAt: null, tasks: assignedTask } } },
+            ],
+          },
+        },
+      ],
+    };
   }
   private conflict() {
     return new ConflictException({

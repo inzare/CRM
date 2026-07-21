@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, Globe2, MessageSquarePlus, Plus, Search, UserRoundPlus, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
+import { useAuth } from '../auth/auth-context';
 import { ApiError, apiRequest } from '../lib/api';
 
 interface Company {
@@ -39,6 +40,8 @@ interface TimelineEvent {
 const emptyCompany = { name: '', industry: '', website: '', city: '', country: '', tags: '' };
 
 export function CompaniesPage(): React.JSX.Element {
+  const { user } = useAuth();
+  const canManageCustomers = user?.role !== 'CONSULTANT';
   const client = useQueryClient();
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Company | null>(null);
@@ -170,13 +173,15 @@ export function CompaniesPage(): React.JSX.Element {
             Keep account context, stakeholders, and activity in one place.
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 rounded-xl bg-ink-950 px-4 py-3 text-sm font-bold text-white"
-        >
-          <Plus className="size-4" />
-          New company
-        </button>
+        {canManageCustomers && (
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 rounded-xl bg-ink-950 px-4 py-3 text-sm font-bold text-white"
+          >
+            <Plus className="size-4" />
+            New company
+          </button>
+        )}
       </header>
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <section className="surface overflow-hidden rounded-2xl">
@@ -274,13 +279,15 @@ export function CompaniesPage(): React.JSX.Element {
               <div className="my-5 border-t border-slate-200" />
               <div className="flex items-center justify-between">
                 <h3 className="font-extrabold text-ink-950">Contacts</h3>
-                <button
-                  onClick={() => setShowContact(true)}
-                  className="flex items-center gap-1 text-xs font-bold text-teal-600"
-                >
-                  <UserRoundPlus className="size-4" />
-                  Add
-                </button>
+                {canManageCustomers && (
+                  <button
+                    onClick={() => setShowContact(true)}
+                    className="flex items-center gap-1 text-xs font-bold text-teal-600"
+                  >
+                    <UserRoundPlus className="size-4" />
+                    Add
+                  </button>
+                )}
               </div>
               {contacts.isLoading ? (
                 <p className="mt-4 text-sm">Loading?</p>

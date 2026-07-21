@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Clock3, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { useState } from 'react';
 
+import { useAuth } from '../auth/auth-context';
 import { ApiError, apiRequest } from '../lib/api';
 
 interface Task {
@@ -27,6 +28,7 @@ interface Company {
 }
 
 export function TasksPage(): React.JSX.Element {
+  const { user } = useAuth();
   const client = useQueryClient();
   const [view, setView] = useState<'all' | 'today' | 'overdue'>('all');
   const [search, setSearch] = useState('');
@@ -206,10 +208,12 @@ export function TasksPage(): React.JSX.Element {
                 label="Assignee"
                 value={form.assigneeId}
                 options={
-                  assignees.data?.map((item) => ({
-                    value: item.id,
-                    label: `${item.name} ? ${item.role}`,
-                  })) ?? []
+                  assignees.data
+                    ?.filter((item) => user?.role !== 'CONSULTANT' || item.id === user.id)
+                    .map((item) => ({
+                      value: item.id,
+                      label: `${item.name} ? ${item.role}`,
+                    })) ?? []
                 }
                 onChange={(assigneeId) => setForm({ ...form, assigneeId })}
               />

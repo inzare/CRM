@@ -454,10 +454,18 @@ describe('authentication and user authorization API', () => {
     await request(app.getHttpServer())
       .delete(`/api/v1/activities/${String(note.body.id)}`)
       .set('Authorization', `Bearer ${salesToken}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/activities/${String(note.body.id)}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(204);
     await request(app.getHttpServer())
       .delete(`/api/v1/tasks/${String(task.body.id)}`)
       .set('Authorization', `Bearer ${salesToken}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/tasks/${String(task.body.id)}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(204);
   });
 
@@ -487,6 +495,29 @@ describe('authentication and user authorization API', () => {
       .expect(200);
     expect(consultantDashboard.body.sales).toBeNull();
     expect(consultantDashboard.body).toHaveProperty('today');
+    const consultantCompanies = await request(app.getHttpServer())
+      .get('/api/v1/companies')
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .expect(200);
+    expect(consultantCompanies.body.data.length).toBeGreaterThan(0);
+    await request(app.getHttpServer())
+      .post('/api/v1/companies')
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .send({ name: 'Forbidden consultant company' })
+      .expect(403);
+    const consultantNote = await request(app.getHttpServer())
+      .post('/api/v1/activities')
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .send({
+        type: 'NOTE',
+        subject: 'Delivery context reviewed',
+        companyId: consultantCompanies.body.data[0].id,
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/activities/${String(consultantNote.body.id)}`)
+      .set('Authorization', `Bearer ${consultantToken}`)
+      .expect(403);
     await request(app.getHttpServer())
       .get('/api/v1/reports/opportunities.csv')
       .set('Authorization', `Bearer ${consultantToken}`)

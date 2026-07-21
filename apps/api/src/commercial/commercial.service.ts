@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { AuditService } from '../audit/audit.service';
 import type { RequestMetadata } from '../auth/auth.types';
@@ -13,6 +14,7 @@ import {
   type AuthenticatedActor,
 } from '../common/authorization-scope';
 import { pageMeta } from '../common/pagination';
+import type { Environment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
 import { serializableTransaction } from '../database/transaction';
 import { Prisma, QuoteStatus, StageType } from '../generated/prisma/client';
@@ -44,6 +46,7 @@ export class CommercialService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly config: ConfigService<Environment, true>,
   ) {}
   async catalog(query: CommercialListQueryDto) {
     const search = query.search?.trim();
@@ -473,32 +476,51 @@ export class CommercialService {
     });
   }
   async renewals(query: RenewalQueryDto, actor: AuthenticatedActor) {
-    const through = new Date(Date.now() + query.days * 86400000);
+    const days = query.days ?? this.config.get('RENEWAL_WINDOW_DAYS', { infer: true }) ?? 30;
+    const through = new Date(Date.now() + days * 86400000);
     const where: Prisma.ContractWhereInput = {
       deletedAt: null,
       ...ownerScope(actor),
       renewalDate: { gte: new Date(), lte: through },
     };
-    const data = await this.prisma.contract.findMany({
-      where,
-      include: {
-        opportunity: { include: { company: true, items: { include: { catalogItem: true } } } },
-        owner: { select: { id: true, name: true } },
-      },
-      orderBy: { renewalDate: 'asc' },
-      take: query.pageSize,
-    });
+    const [data, activeCatalog] = await Promise.all([
+      this.prisma.contract.findMany({
+        where,
+        include: {
+          opportunity: { include: { company: true, items: { include: { catalogItem: true } } } },
+          owner: { select: { id: true, name: true } },
+        },
+        orderBy: { renewalDate: 'asc' },
+        take: query.pageSize,
+      }),
+      this.prisma.catalogItem.findMany({
+        where: { isActive: true },
+        orderBy: [{ category: 'asc' }, { name: 'asc' }],
+      }),
+    ]);
     return {
       data: data.map((contract) => ({
         ...contract,
-        suggestions: contract.opportunity.items.map((item) => ({
-          sku: item.catalogItem.sku,
-          name: item.catalogItem.name,
-          type: item.catalogItem.type,
-        })),
+        suggestions: this.expansionSuggestions(contract.opportunity.items, activeCatalog),
       })),
       meta: pageMeta(1, query.pageSize, data.length),
     };
+  }
+  private expansionSuggestions(
+    purchased: Array<{ catalogItem: { category: string } }>,
+    activeCatalog: Array<{ sku: string; name: string; type: string; category: string }>,
+  ) {
+    const purchasedCategories = new Set(purchased.map((item) => item.catalogItem.category));
+    const suggestions = new Map<string, (typeof activeCatalog)[number]>();
+    for (const item of activeCatalog)
+      if (!purchasedCategories.has(item.category) && !suggestions.has(item.category))
+        suggestions.set(item.category, item);
+    return [...suggestions.values()].map(({ sku, name, type, category }) => ({
+      sku,
+      name,
+      type,
+      category,
+    }));
   }
   async contracts(query: CommercialListQueryDto, actor: AuthenticatedActor) {
     const where: Prisma.ContractWhereInput = { deletedAt: null, ...ownerScope(actor) };

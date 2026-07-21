@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import { businessDayBounds } from '../activities/business-time';
 import { canManageAllRecords, type AuthenticatedActor } from '../common/authorization-scope';
+import type { Environment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
 import { Prisma, StageType, TaskStatus } from '../generated/prisma/client';
 
@@ -9,13 +12,19 @@ import type { ReportQueryDto } from './reporting.dto';
 
 @Injectable()
 export class ReportingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService<Environment, true>,
+  ) {}
   async dashboard(query: ReportQueryDto, actor: AuthenticatedActor) {
     const now = new Date();
-    const startToday = new Date(now);
-    startToday.setHours(0, 0, 0, 0);
-    const endToday = new Date(startToday);
-    endToday.setDate(endToday.getDate() + 1);
+    const { start: startToday, end: endToday } = businessDayBounds(
+      now,
+      this.config.get('APP_TIMEZONE', { infer: true }),
+    );
+    const renewalThrough = new Date(
+      now.getTime() + this.config.get('RENEWAL_WINDOW_DAYS', { infer: true }) * 86400000,
+    );
     const scope = this.scope(query, actor);
     const taskScope =
       canManageAllRecords(actor) && query.ownerId
@@ -23,7 +32,7 @@ export class ReportingService {
         : canManageAllRecords(actor)
           ? {}
           : { assigneeId: actor.id };
-    const [today, overdue, noRecentActivity, renewals] = await Promise.all([
+    const [today, overdue, noRecentActivity, rawRenewals, activeCatalog] = await Promise.all([
       this.prisma.task.findMany({
         where: {
           deletedAt: null,
@@ -47,33 +56,72 @@ export class ReportingService {
         orderBy: { dueAt: 'asc' },
         take: 10,
       }),
-      this.prisma.company.findMany({
-        where: {
-          deletedAt: null,
-          ...(canManageAllRecords(actor) ? {} : { ownerId: actor.id }),
-          activities: {
-            none: { deletedAt: null, occurredAt: { gte: new Date(Date.now() - 14 * 86400000) } },
-          },
-        },
-        select: { id: true, name: true, owner: { select: { name: true } } },
-        take: 10,
-      }),
+      this.noRecentActivity(actor),
       this.prisma.contract.findMany({
         where: {
           deletedAt: null,
           ...scope,
-          renewalDate: { gte: now, lte: new Date(Date.now() + 90 * 86400000) },
+          status: 'ACTIVE',
+          renewalDate: { lte: renewalThrough },
         },
-        include: { opportunity: { include: { company: true } }, owner: { select: { name: true } } },
+        include: {
+          opportunity: {
+            include: { company: true, items: { include: { catalogItem: true } } },
+          },
+          owner: { select: { name: true } },
+        },
         orderBy: { renewalDate: 'asc' },
         take: 10,
       }),
+      this.prisma.catalogItem.findMany({ where: { isActive: true }, orderBy: { category: 'asc' } }),
     ]);
+    const renewals = rawRenewals.map((contract) => {
+      const purchased = new Set(
+        contract.opportunity.items.map((item) => item.catalogItem.category),
+      );
+      const suggestions = new Map<string, (typeof activeCatalog)[number]>();
+      for (const item of activeCatalog)
+        if (!purchased.has(item.category) && !suggestions.has(item.category))
+          suggestions.set(item.category, item);
+      return {
+        ...contract,
+        expansionSuggestions: [...suggestions.values()].map(({ sku, name, category, type }) => ({
+          sku,
+          name,
+          category,
+          type,
+        })),
+      };
+    });
     if (actor.role === 'CONSULTANT')
       return { sales: null, today, overdue, noRecentActivity, renewals: [] };
+    const currencyScope = query.currency ? { currency: query.currency.toUpperCase() } : {};
     const opportunities = await this.prisma.opportunity.findMany({
-      where: { deletedAt: null, ...scope, ...this.dateScope(query, 'closeDate') },
+      where: {
+        deletedAt: null,
+        ...scope,
+        ...currencyScope,
+        stage: { type: StageType.OPEN },
+        ...this.dateScope(query, 'closeDate'),
+      },
       include: { stage: true, items: { include: { catalogItem: true } } },
+    });
+    const terminalOpportunities = await this.prisma.opportunity.findMany({
+      where: {
+        deletedAt: null,
+        ...scope,
+        ...currencyScope,
+        stage: { type: { in: [StageType.WON, StageType.LOST] } },
+        ...this.dateScope(query, 'actualCloseDate'),
+      },
+      include: {
+        stage: true,
+        stageHistory: {
+          where: { toStage: { type: StageType.WON } },
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+        },
+      },
     });
     const stages = await this.prisma.pipelineStage.findMany({ orderBy: { order: 'asc' } });
     const pipeline = stages.map((stage) => {
@@ -95,8 +143,8 @@ export class ReportingService {
           .toString(),
       };
     });
-    const won = opportunities.filter((item) => item.stage.type === StageType.WON);
-    const lost = opportunities.filter((item) => item.stage.type === StageType.LOST);
+    const won = terminalOpportunities.filter((item) => item.stage.type === StageType.WON);
+    const lost = terminalOpportunities.filter((item) => item.stage.type === StageType.LOST);
     const leads = await this.prisma.lead.count({
       where: { deletedAt: null, ...scope, ...this.dateScope(query, 'createdAt') },
     });
@@ -123,6 +171,7 @@ export class ReportingService {
       sales: {
         pipeline,
         weightedForecast: pipeline
+          .filter((item) => item.type === StageType.OPEN)
           .reduce((sum, item) => sum.add(item.weighted), new Prisma.Decimal(0))
           .toString(),
         wonRevenue: won
@@ -132,6 +181,13 @@ export class ReportingService {
         winRate: won.length + lost.length ? won.length / (won.length + lost.length) : 0,
         wonCount: won.length,
         lostCount: lost.length,
+        averageSalesCycleDays: won.length
+          ? won.reduce((sum, item) => {
+              const wonAt =
+                item.stageHistory[0]?.createdAt ?? item.actualCloseDate ?? item.updatedAt;
+              return sum + Math.max(0, wonAt.getTime() - item.createdAt.getTime()) / 86400000;
+            }, 0) / won.length
+          : 0,
         salesByOffering: [...salesMap].map(([sku, value]) => ({ sku, value: value.toString() })),
         currency: query.currency?.toUpperCase() ?? 'USD',
       },
@@ -140,6 +196,68 @@ export class ReportingService {
       noRecentActivity,
       renewals,
     };
+  }
+
+  private async noRecentActivity(actor: AuthenticatedActor) {
+    const threshold = new Date(
+      Date.now() - this.config.get('NO_ACTIVITY_DAYS', { infer: true }) * 86400000,
+    );
+    const scope = canManageAllRecords(actor) ? {} : { ownerId: actor.id };
+    const stale = {
+      deletedAt: null,
+      createdAt: { lt: threshold },
+      activities: { none: { deletedAt: null, occurredAt: { gte: threshold } } },
+      ...scope,
+    } as const;
+    const [companies, contacts, leads, opportunities] = await Promise.all([
+      this.prisma.company.findMany({
+        where: stale,
+        select: { id: true, name: true, owner: { select: { name: true } } },
+        take: 10,
+      }),
+      this.prisma.contact.findMany({
+        where: stale,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          owner: { select: { name: true } },
+        },
+        take: 10,
+      }),
+      this.prisma.lead.findMany({
+        where: { ...stale, status: { in: ['NEW', 'QUALIFIED'] } },
+        select: {
+          id: true,
+          companyName: true,
+          contactFirstName: true,
+          contactLastName: true,
+          owner: { select: { name: true } },
+        },
+        take: 10,
+      }),
+      this.prisma.opportunity.findMany({
+        where: { ...stale, stage: { type: StageType.OPEN } },
+        select: { id: true, name: true, owner: { select: { name: true } } },
+        take: 10,
+      }),
+    ]);
+    return [
+      ...companies.map((item) => ({ ...item, entityType: 'COMPANY' as const })),
+      ...contacts.map((item) => ({
+        id: item.id,
+        name: `${item.firstName} ${item.lastName}`,
+        owner: item.owner,
+        entityType: 'CONTACT' as const,
+      })),
+      ...leads.map((item) => ({
+        id: item.id,
+        name: item.companyName ?? `${item.contactFirstName} ${item.contactLastName}`,
+        owner: item.owner,
+        entityType: 'LEAD' as const,
+      })),
+      ...opportunities.map((item) => ({ ...item, entityType: 'OPPORTUNITY' as const })),
+    ].slice(0, 10);
   }
   async export(
     kind: 'opportunities' | 'offering-sales' | 'renewals' | 'overdue',

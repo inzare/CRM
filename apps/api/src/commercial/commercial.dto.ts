@@ -78,5 +78,5 @@ export class UpdateContractDto extends PartialType(
   OmitType(CreateContractDto, ['opportunityId', 'quoteId'] as const),
 ) {}
 export class RenewalQueryDto extends PageQueryDto {
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) days = 90;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) days?: number;
 }

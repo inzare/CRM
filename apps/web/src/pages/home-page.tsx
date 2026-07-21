@@ -41,6 +41,7 @@ interface Dashboard {
     currency: string;
     renewalDate: string;
     opportunity: { company: { name: string } };
+    expansionSuggestions: Array<{ sku: string; name: string; category: string; type: string }>;
   }>;
 }
 interface OwnerOption {
@@ -270,6 +271,12 @@ export function HomePage(): React.JSX.Element {
                 <p className="mt-1 text-xs text-ink-700">
                   Renews {new Date(item.renewalDate).toLocaleDateString()}
                 </p>
+                {item.expansionSuggestions[0] && (
+                  <p className="mt-2 rounded-lg bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-800">
+                    Expansion: {item.expansionSuggestions[0].category} ?{' '}
+                    {item.expansionSuggestions[0].name}
+                  </p>
+                )}
               </article>
             ))}
           </div>

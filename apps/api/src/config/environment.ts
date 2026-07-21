@@ -15,6 +15,8 @@ const schema = z
     LOGIN_RATE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(5),
     GLOBAL_RATE_LIMIT: z.coerce.number().int().min(1).max(100_000).default(120),
     APP_TIMEZONE: z.string().default('America/Mexico_City'),
+    NO_ACTIVITY_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+    RENEWAL_WINDOW_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     SWAGGER_ENABLED: z.string().optional(),
     EMAIL_PROVIDER: z.enum(['console', 'ses']).default('console'),

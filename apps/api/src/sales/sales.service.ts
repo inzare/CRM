@@ -389,6 +389,24 @@ export class SalesService {
           convertedAt: new Date(),
         },
       });
+      await database.activity.createMany({
+        data: [
+          {
+            type: 'NOTE',
+            subject: 'Lead converted to opportunity',
+            body: `${lead.contactFirstName} ${lead.contactLastName} converted into ${opportunity.name}.`,
+            creatorId: actor.id,
+            companyId,
+          },
+          {
+            type: 'NOTE',
+            subject: 'Lead converted to opportunity',
+            body: `${opportunity.name} was created from the qualified lead.`,
+            creatorId: actor.id,
+            contactId: contact.id,
+          },
+        ],
+      });
       await this.audit.record(
         {
           actorId: actor.id,
@@ -652,6 +670,20 @@ export class SalesService {
           },
         },
         include: opportunityInclude,
+      });
+      const timelineEvent = {
+        type: 'NOTE' as const,
+        subject: `Opportunity moved to ${target.displayName}`,
+        body: input.reason?.trim() ?? input.lossReason?.trim() ?? null,
+        creatorId: actor.id,
+      };
+      await database.activity.createMany({
+        data: [
+          { ...timelineEvent, companyId: current.companyId },
+          ...(current.primaryContactId
+            ? [{ ...timelineEvent, contactId: current.primaryContactId }]
+            : []),
+        ],
       });
       await this.audit.record(
         {

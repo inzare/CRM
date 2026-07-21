@@ -338,6 +338,22 @@ describe('authentication and user authorization API', () => {
       .send({ status: 'ACCEPTED' })
       .expect(201);
     expect(accepted.body.status).toBe('ACCEPTED');
+    const repeatedAcceptance = await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(first.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'ACCEPTED' })
+      .expect(201);
+    expect(repeatedAcceptance.body.acceptedAt).toBe(accepted.body.acceptedAt);
+    await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(second.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'SENT' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/quotes/${String(second.body.id)}/status`)
+      .set('Authorization', `Bearer ${salesToken}`)
+      .send({ status: 'ACCEPTED' })
+      .expect(409);
     const stages = await request(app.getHttpServer())
       .get('/api/v1/pipeline-stages')
       .set('Authorization', `Bearer ${salesToken}`)

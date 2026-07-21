@@ -355,16 +355,25 @@ export class CommercialService {
     actor: AuthenticatedActor,
     metadata: RequestMetadata,
   ) {
-    return this.prisma.$transaction(async (db) => {
+    const result = await this.prisma.$transaction(async (db) => {
       const current = await db.quote.findFirst({
         where: { id, opportunity: { deletedAt: null, ...ownerScope(actor) } },
+        include: {
+          opportunity: { select: { name: true, companyId: true, primaryContactId: true } },
+        },
       });
       if (!current) throw this.notFound('Quote');
+      if (current.status === status)
+        return {
+          quote: await db.quote.findUniqueOrThrow({ where: { id }, include: quoteInclude }),
+          expiredConflict: false,
+        };
       const now = new Date();
-      const effective =
-        current.status === QuoteStatus.SENT && current.validUntil < now
-          ? QuoteStatus.EXPIRED
-          : current.status;
+      const expiredConflict =
+        current.status === QuoteStatus.SENT &&
+        current.validUntil < now &&
+        status !== QuoteStatus.EXPIRED;
+      const nextStatus = expiredConflict ? QuoteStatus.EXPIRED : status;
       const allowed: Record<QuoteStatus, QuoteStatus[]> = {
         DRAFT: [QuoteStatus.SENT],
         SENT: [QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.EXPIRED],
@@ -372,30 +381,49 @@ export class CommercialService {
         REJECTED: [],
         EXPIRED: [],
       };
-      if (!allowed[effective].includes(status))
+      if (!allowed[current.status].includes(nextStatus))
         throw new ConflictException({
           code: 'INVALID_QUOTE_TRANSITION',
-          message: `Quote cannot move from ${effective} to ${status}.`,
+          message: `Quote cannot move from ${current.status} to ${nextStatus}.`,
         });
-      if (status === QuoteStatus.ACCEPTED)
-        await db.quote.updateMany({
+      if (
+        nextStatus === QuoteStatus.ACCEPTED &&
+        (await db.quote.count({
           where: {
             opportunityId: current.opportunityId,
             status: QuoteStatus.ACCEPTED,
             id: { not: id },
           },
-          data: { status: QuoteStatus.REJECTED, rejectedAt: now },
+        })) > 0
+      )
+        throw new ConflictException({
+          code: 'QUOTE_ALREADY_ACCEPTED',
+          message: 'This opportunity already has an accepted quote.',
         });
       const updated = await db.quote.update({
         where: { id },
         data: {
-          status,
-          sentAt: status === QuoteStatus.SENT ? now : current.sentAt,
-          acceptedAt: status === QuoteStatus.ACCEPTED ? now : null,
-          rejectedAt: status === QuoteStatus.REJECTED ? now : null,
-          expiredAt: status === QuoteStatus.EXPIRED ? now : null,
+          status: nextStatus,
+          sentAt: nextStatus === QuoteStatus.SENT ? now : current.sentAt,
+          acceptedAt: nextStatus === QuoteStatus.ACCEPTED ? now : null,
+          rejectedAt: nextStatus === QuoteStatus.REJECTED ? now : null,
+          expiredAt: nextStatus === QuoteStatus.EXPIRED ? now : null,
         },
         include: quoteInclude,
+      });
+      const timelineEvent = {
+        type: 'NOTE' as const,
+        subject: `Quote ${updated.number} ${nextStatus.toLowerCase()}`,
+        body: `${current.opportunity.name} quote status changed from ${current.status} to ${nextStatus}.`,
+        creatorId: actor.id,
+      };
+      await db.activity.createMany({
+        data: [
+          { ...timelineEvent, companyId: current.opportunity.companyId },
+          ...(current.opportunity.primaryContactId
+            ? [{ ...timelineEvent, contactId: current.opportunity.primaryContactId }]
+            : []),
+        ],
       });
       await this.audit.record(
         {
@@ -405,12 +433,18 @@ export class CommercialService {
           entityId: id,
           requestId: metadata.requestId,
           before: { status: current.status },
-          after: { status },
+          after: { status: nextStatus },
         },
         db,
       );
-      return updated;
+      return { quote: updated, expiredConflict };
     }, serializableTransaction);
+    if (result.expiredConflict)
+      throw new ConflictException({
+        code: 'QUOTE_EXPIRED',
+        message: 'The quote expired before this transition and is now marked Expired.',
+      });
+    return result.quote;
   }
   async createContract(
     input: CreateContractDto,

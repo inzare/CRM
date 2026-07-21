@@ -253,14 +253,48 @@ export function PipelinePage(): React.JSX.Element {
         }),
       });
     },
-    onSuccess: async (opportunity) => {
-      setAnnouncement(`${opportunity.name} moved successfully.`);
-      await client.invalidateQueries({ queryKey: ['pipeline'] });
+    onMutate: async ({ opportunity, target }) => {
+      await client.cancelQueries({ queryKey: ['pipeline'] });
+      const previous = client.getQueryData<Stage[]>(['pipeline']);
+      client.setQueryData<Stage[]>(['pipeline'], (current) =>
+        current?.map((stage) => {
+          if (stage.id === opportunity.stageId)
+            return {
+              ...stage,
+              opportunities: stage.opportunities.filter((item) => item.id !== opportunity.id),
+              count: Math.max(0, stage.count - 1),
+              value: String(Number(stage.value) - Number(opportunity.expectedValue)),
+            };
+          if (stage.id === target.id)
+            return {
+              ...stage,
+              opportunities: [
+                ...stage.opportunities,
+                {
+                  ...opportunity,
+                  stageId: target.id,
+                  probability: target.defaultProbability,
+                },
+              ],
+              count: stage.count + 1,
+              value: String(Number(stage.value) + Number(opportunity.expectedValue)),
+            };
+          return stage;
+        }),
+      );
+      setAnnouncement(`Moving ${opportunity.name} to ${target.displayName}.`);
+      return { previous };
     },
-    onError: (error) =>
+    onSuccess: (opportunity) => {
+      setAnnouncement(`${opportunity.name} moved successfully.`);
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previous) client.setQueryData(['pipeline'], context.previous);
       setAnnouncement(
-        error instanceof ApiError ? error.message : 'The opportunity could not be moved.',
-      ),
+        `${error instanceof ApiError ? error.message : 'The opportunity could not be moved.'} The board was restored.`,
+      );
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: ['pipeline'] }),
   });
   const move = (opportunity: Opportunity, targetId: string) => {
     const target = board.data?.find((stage) => stage.id === targetId);

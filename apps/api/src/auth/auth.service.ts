@@ -93,7 +93,9 @@ export class AuthService {
     };
   }
 
-  async refresh(rawToken: string, metadata: RequestMetadata): Promise<SessionResult> {
+  async refresh(rawToken: string | undefined, metadata: RequestMetadata): Promise<SessionResult> {
+    if (!rawToken) throw this.sessionRevoked();
+
     const session = await this.prisma.refreshSession.findUnique({
       where: { tokenHash: this.hashRefreshToken(rawToken) },
       include: { user: true },

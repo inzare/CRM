@@ -74,7 +74,7 @@ export class AuthController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.auth.logout(this.readRefreshCookie(request, false), this.metadata(request));
+    await this.auth.logout(this.readRefreshCookie(request), this.metadata(request));
     response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
   }
 
@@ -110,12 +110,11 @@ export class AuthController {
     response.cookie(REFRESH_COOKIE, token, { ...this.cookieOptions(), expires: expiresAt });
   }
 
-  private readRefreshCookie(request: Request, required = true): string {
+  private readRefreshCookie(request: Request): string | undefined {
     const cookies = request.cookies as Record<string, unknown> | undefined;
     const token = cookies?.[REFRESH_COOKIE];
     if (typeof token === 'string' && token.length >= 32) return token;
-    if (!required) return '';
-    return 'missing';
+    return undefined;
   }
 
   private cookieOptions(): CookieOptions {
